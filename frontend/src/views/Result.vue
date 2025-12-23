@@ -504,23 +504,74 @@ const validateAndFixPlan = (plan: any, strict: boolean = false): TripPlan | null
 }
 
 // 检查计划是否已保存
-const checkPlanSaved = () => {
+const checkPlanSaved = async () => {
   if (!tripPlan.value || !authStore.isAuthenticated) {
     isPlanSaved.value = false
     return
   }
+  
+  // 优先检查是否有标记表示这是从历史记录加载的计划
+  const planSource = sessionStorage.getItem('tripPlanSource')
+  if (planSource === 'history') {
+    // 从历史记录加载的计划，标记为已保存
+    isPlanSaved.value = true
+    console.log('检测到从历史记录加载的计划，标记为已保存')
+    return
+  }
+  
+  // 如果不是从历史加载的，检查是否已经保存过
+  // 通过检查 sessionStorage 中是否有保存标记
+  const savedPlanId = sessionStorage.getItem('savedPlanId')
+  if (savedPlanId) {
+    // 检查保存的计划ID是否与当前计划匹配
+    // 这里我们通过比较计划的关键信息来判断
+    const savedPlanInfo = sessionStorage.getItem('savedPlanInfo')
+    if (savedPlanInfo) {
+      try {
+        const savedInfo = JSON.parse(savedPlanInfo)
+        // 比较城市、开始日期、结束日期
+        if (tripPlan.value.city === savedInfo.city &&
+            tripPlan.value.start_date === savedInfo.start_date &&
+            tripPlan.value.end_date === savedInfo.end_date) {
+          // 当前计划已保存
+          isPlanSaved.value = true
+          return
+        }
+      } catch (e) {
+        // 解析失败，清除标记
+        sessionStorage.removeItem('savedPlanId')
+        sessionStorage.removeItem('savedPlanInfo')
+      }
+    }
+  }
+  
   // 检查 sessionStorage 中是否有待保存的计划
   const pendingPlan = sessionStorage.getItem('pendingTripPlan')
   if (pendingPlan) {
-    isPlanSaved.value = false
+    // 比较当前计划和pendingPlan是否相同
+    try {
+      const pendingPlanData = JSON.parse(pendingPlan)
+      // 简单比较：城市、开始日期、结束日期
+      if (tripPlan.value.city === pendingPlanData.city &&
+          tripPlan.value.start_date === pendingPlanData.start_date &&
+          tripPlan.value.end_date === pendingPlanData.end_date) {
+        // 当前计划就是待保存的计划，还未保存
+        isPlanSaved.value = false
+      } else {
+        // 当前计划不是待保存的计划，可能是新生成的
+        isPlanSaved.value = false
+      }
+    } catch (e) {
+      isPlanSaved.value = false
+    }
   } else {
-    // 这里可以调用 API 检查计划是否已保存
-    isPlanSaved.value = false  // 暂时设为 false，实际应该调用 API 检查
+    // 没有pendingPlan，可能是新生成的计划
+    isPlanSaved.value = false
   }
 }
 
 // 监听 store 中的计划更新
-watch(() => tripStore.tripPlan, (newPlan) => {
+watch(() => tripStore.tripPlan, async (newPlan) => {
   if (newPlan) {
     // 宽松模式验证，允许显示部分数据
     const validatedPlan = validateAndFixPlan(newPlan, false)
@@ -528,6 +579,17 @@ watch(() => tripStore.tripPlan, (newPlan) => {
       tripPlan.value = validatedPlan
       sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
       isLoading.value = false
+      
+      // 当计划更新时，重新检查保存状态
+      // 如果计划来源不是历史记录，清除历史记录标记
+      const planSource = sessionStorage.getItem('tripPlanSource')
+      if (planSource !== 'history') {
+        // 新生成的计划，清除保存标记，重新检查
+        sessionStorage.removeItem('savedPlanId')
+        sessionStorage.removeItem('savedPlanInfo')
+        await checkPlanSaved()
+      }
+      
       // 加载景点图片和初始化地图
       nextTick(() => {
         loadAttractionPhotos()
@@ -649,26 +711,59 @@ onMounted(async () => {
     }, { immediate: true })
   }
   
-  // 检查计划是否已保存
-  checkPlanSaved()
+  // 检查计划是否已保存（必须在自动保存逻辑之前）
+  await checkPlanSaved()
   
   // 检查是否有待保存的计划（登录后自动保存）
-  if (authStore.isAuthenticated) {
-    const pendingPlan = sessionStorage.getItem('pendingTripPlan')
-    if (pendingPlan) {
-      try {
-        const plan = JSON.parse(pendingPlan)
-        // 保存时使用严格模式验证
-        const validatedPlan = validateAndFixPlan(plan, true)
-        if (validatedPlan) {
-          // 自动保存计划
-          await handleSavePlan(validatedPlan)
-        } else {
-          console.warn('待保存的计划数据不完整，跳过自动保存')
-          sessionStorage.removeItem('pendingTripPlan')
+  // 重要：只在当前计划就是pendingPlan且不是从历史加载时才自动保存
+  // 并且只在首次加载时执行一次（通过检查是否已执行过自动保存）
+  if (authStore.isAuthenticated && tripPlan.value) {
+    // 如果是从历史记录加载的计划，不执行自动保存
+    const planSource = sessionStorage.getItem('tripPlanSource')
+    if (planSource === 'history') {
+      // 从历史加载的计划，清除pendingPlan标记，避免误判
+      sessionStorage.removeItem('pendingTripPlan')
+      console.log('从历史记录加载的计划，跳过自动保存')
+    } else {
+      // 检查是否已经执行过自动保存（防止重复保存）
+      const autoSaveExecuted = sessionStorage.getItem('autoSaveExecuted')
+      if (!autoSaveExecuted) {
+        // 不是从历史加载的，检查是否有待保存的计划
+        const pendingPlan = sessionStorage.getItem('pendingTripPlan')
+        if (pendingPlan) {
+          try {
+            const plan = JSON.parse(pendingPlan)
+            // 比较当前计划和pendingPlan是否相同（通过城市、日期判断）
+            const isSamePlan = tripPlan.value.city === plan.city &&
+                              tripPlan.value.start_date === plan.start_date &&
+                              tripPlan.value.end_date === plan.end_date
+            
+            if (isSamePlan && !isPlanSaved.value) {
+              // 当前计划就是待保存的计划，且未保存，自动保存
+              const validatedPlan = validateAndFixPlan(plan, true)
+              if (validatedPlan) {
+                console.log('检测到待保存的计划，自动保存...')
+                // 标记已执行自动保存，防止重复
+                sessionStorage.setItem('autoSaveExecuted', 'true')
+                await handleSavePlan(validatedPlan)
+              } else {
+                console.warn('待保存的计划数据不完整，跳过自动保存')
+                sessionStorage.removeItem('pendingTripPlan')
+              }
+            } else {
+              // 当前计划不是待保存的计划，或已保存，清除pendingPlan标记
+              console.log('当前计划不是待保存的计划或已保存，清除pendingPlan标记')
+              sessionStorage.removeItem('pendingTripPlan')
+            }
+          } catch (e) {
+            console.error('解析待保存计划失败:', e)
+            sessionStorage.removeItem('pendingTripPlan')
+          }
         }
-      } catch (e) {
-        console.error('解析待保存计划失败:', e)
+      } else {
+        // 已经执行过自动保存，清除标记
+        console.log('已执行过自动保存，清除标记')
+        sessionStorage.removeItem('autoSaveExecuted')
         sessionStorage.removeItem('pendingTripPlan')
       }
     }
@@ -808,8 +903,18 @@ const handleSavePlan = async (planToSave?: TripPlan) => {
     const result = await saveTripPlan(requestData, planToSaveValidated)
     
     if (result.success) {
-      // 清除待保存的计划
+      // 清除待保存的计划和自动保存标记
       sessionStorage.removeItem('pendingTripPlan')
+      sessionStorage.removeItem('autoSaveExecuted')
+      // 保存计划ID和信息，用于后续判断
+      if (result.data && result.data.trip_id) {
+        sessionStorage.setItem('savedPlanId', String(result.data.trip_id))
+        sessionStorage.setItem('savedPlanInfo', JSON.stringify({
+          city: planToSaveValidated.city,
+          start_date: planToSaveValidated.start_date,
+          end_date: planToSaveValidated.end_date
+        }))
+      }
       isPlanSaved.value = true
       message.success('✅ 旅行计划已成功保存到历史记录！')
       console.log('保存成功:', result)

@@ -342,13 +342,29 @@ const loadHistory = async () => {
   try {
     const response = await apiClient.get('/api/history/trips', {
       params: { 
-        limit: 5,
+        limit: 20,  // 加载更多记录以便去重
         include_plan_data: false  // 不加载详细数据，提升性能
       }
     })
     if (response.data.success && response.data.data) {
-      recentTrips.value = response.data.data
-      console.log('快速加载了最近5条历史记录（不含详细数据）')
+      // 去重：根据 city + start_date + end_date 组合去重（与History.vue保持一致）
+      const uniqueTrips = new Map()
+      const allTrips = response.data.data || []
+      
+      allTrips.forEach((trip: any) => {
+        const key = `${trip.city}-${trip.start_date}-${trip.end_date}`
+        // 保留最新的记录
+        if (!uniqueTrips.has(key) || new Date(trip.created_at) > new Date(uniqueTrips.get(key).created_at)) {
+          uniqueTrips.set(key, trip)
+        }
+      })
+      
+      // 取前5条显示
+      recentTrips.value = Array.from(uniqueTrips.values())
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 5)
+      
+      console.log(`快速加载了 ${allTrips.length} 条记录，去重后 ${uniqueTrips.size} 条，显示最近5条`)
     }
   } catch (error) {
     console.error('加载历史记录失败:', error)
@@ -376,8 +392,26 @@ const viewHistoryTrip = async (item: any) => {
       const fullTrip = response.data.data
       // 将完整数据保存到store
       if (fullTrip.plan_data) {
-        tripStore.setTripPlan(fullTrip.plan_data)
-        sessionStorage.setItem('tripPlan', JSON.stringify(fullTrip.plan_data))
+        let planData = fullTrip.plan_data
+        if (typeof planData === 'string') {
+          planData = JSON.parse(planData)
+        }
+        tripStore.setTripPlan(planData)
+        sessionStorage.setItem('tripPlan', JSON.stringify(planData))
+        // 标记这是从历史记录加载的计划，已保存
+        sessionStorage.setItem('tripPlanSource', 'history')
+        // 清除所有保存相关的标记，避免误判
+        sessionStorage.removeItem('pendingTripPlan')
+        sessionStorage.removeItem('autoSaveExecuted')
+        // 设置保存标记，表示这个计划已保存
+        if (fullTrip.id) {
+          sessionStorage.setItem('savedPlanId', String(fullTrip.id))
+          sessionStorage.setItem('savedPlanInfo', JSON.stringify({
+            city: planData.city,
+            start_date: planData.start_date,
+            end_date: planData.end_date
+          }))
+        }
         // 跳转到结果页
         router.push('/result')
       } else {

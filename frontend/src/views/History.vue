@@ -300,6 +300,20 @@ function loadTripPlan(trip: any) {
   
   tripStore.setTripPlan(planData)
   sessionStorage.setItem('tripPlan', JSON.stringify(planData))
+  // 标记这是从历史记录加载的计划，已保存
+  sessionStorage.setItem('tripPlanSource', 'history')
+  // 清除所有保存相关的标记，避免误判
+  sessionStorage.removeItem('pendingTripPlan')
+  sessionStorage.removeItem('autoSaveExecuted')
+  // 设置保存标记，表示这个计划已保存
+  if (trip.id) {
+    sessionStorage.setItem('savedPlanId', String(trip.id))
+    sessionStorage.setItem('savedPlanInfo', JSON.stringify({
+      city: planData.city,
+      start_date: planData.start_date,
+      end_date: planData.end_date
+    }))
+  }
   message.success('计划已加载')
   tripModalVisible.value = false
   router.push('/result')
