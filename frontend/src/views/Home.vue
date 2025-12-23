@@ -332,7 +332,7 @@ watch([() => formData.start_date, () => formData.end_date], ([start, end]: [any,
   }
 })
 
-// 加载历史记录
+// 加载历史记录（仅列表，不包含详细数据）
 const loadHistory = async () => {
   if (!authStore.isAuthenticated) {
     return
@@ -341,10 +341,14 @@ const loadHistory = async () => {
   loadingHistory.value = true
   try {
     const response = await apiClient.get('/api/history/trips', {
-      params: { limit: 5 }
+      params: { 
+        limit: 5,
+        include_plan_data: false  // 不加载详细数据，提升性能
+      }
     })
     if (response.data.success && response.data.data) {
       recentTrips.value = response.data.data
+      console.log('快速加载了最近5条历史记录（不含详细数据）')
     }
   } catch (error) {
     console.error('加载历史记录失败:', error)
@@ -363,10 +367,27 @@ const formatDate = (dateStr: string) => {
   })
 }
 
-// 查看历史记录
-const viewHistoryTrip = (item: any) => {
-  // 跳转到结果页，并加载该计划
-  router.push(`/result?trip_id=${item.id}`)
+// 查看历史记录详情
+const viewHistoryTrip = async (item: any) => {
+  // 加载完整的计划数据
+  try {
+    const response = await apiClient.get(`/api/history/trips/${item.id}`)
+    if (response.data.success && response.data.data) {
+      const fullTrip = response.data.data
+      // 将完整数据保存到store
+      if (fullTrip.plan_data) {
+        tripStore.setTripPlan(fullTrip.plan_data)
+        sessionStorage.setItem('tripPlan', JSON.stringify(fullTrip.plan_data))
+        // 跳转到结果页
+        router.push('/result')
+      } else {
+        message.error('该历史记录缺少计划数据')
+      }
+    }
+  } catch (error) {
+    console.error('加载历史记录详情失败:', error)
+    message.error('加载失败，请稍后重试')
+  }
 }
 
 // 监听登录状态变化

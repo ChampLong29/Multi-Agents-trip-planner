@@ -92,10 +92,18 @@ class MultiAgentTripPlanner:
                 elif not tel_value or tel_value == "":
                     tel_value = None
                 
+                # 处理 address 字段：可能是字符串、列表或 None
+                address_value = poi_data.get("address", "")
+                if isinstance(address_value, list):
+                    # 如果是列表，取第一个元素或转为字符串
+                    address_value = address_value[0] if address_value else ""
+                elif not address_value:
+                    address_value = ""
+                
                 poi_info = POIInfo(
                     id=poi_data.get("id", ""),
                     name=poi_data.get("name", ""),
-                    address=poi_data.get("address", ""),
+                    address=address_value,
                     location=location,
                     type=poi_data.get("type", ""),
                     tel=tel_value
@@ -125,18 +133,24 @@ class MultiAgentTripPlanner:
             state["progress"]["weather"]["progress"] = 50
             
             request = state["request"]
+            print(f"🔍 查询城市: {request.city}")
             
             # 调用工具查询天气
             result_str = await self.weather_tool._arun(city=request.city)
+            print(f"🔍 天气API原始响应: {result_str[:500]}...")  # 只打印前500字符
             result = json.loads(result_str)
             
             if result.get("error"):
+                print(f"❌ 天气API返回错误: {result['error']}")
                 state["errors"].append(f"天气查询失败: {result['error']}")
                 state["progress"]["weather"]["status"] = "failed"
                 return state
             
             # 解析天气数据
             forecasts = result.get("forecasts", [])
+            print(f"🔍 解析到的forecasts数量: {len(forecasts)}")
+            if forecasts:
+                print(f"🔍 第一个forecast示例: {forecasts[0]}")
             weather_list = []
             
             # 计算日期范围
@@ -146,12 +160,16 @@ class MultiAgentTripPlanner:
             for i in range(request.travel_days):
                 current_date = start_date + timedelta(days=i)
                 date_str = current_date.strftime("%Y-%m-%d")
+                print(f"🔍 查找日期 {date_str} 的天气数据...")
                 
                 # 查找匹配的天气数据
                 weather_data = None
                 for forecast in forecasts:
-                    if forecast.get("date") == date_str:
+                    forecast_date = forecast.get("date", "")
+                    print(f"  - 对比: API日期={forecast_date}, 需要日期={date_str}")
+                    if forecast_date == date_str:
                         weather_data = forecast
+                        print(f"  ✅ 找到匹配的天气数据")
                         break
                 
                 if weather_data:

@@ -412,9 +412,33 @@ const validateAndFixPlan = (plan: any, strict: boolean = false): TripPlan | null
     return null
   }
   
+  // 创建副本，避免修改原对象导致watch无限循环
+  const planCopy = JSON.parse(JSON.stringify(plan))
+  
+  // 确保 days 字段始终存在
+  if (!planCopy.days) {
+    console.warn('validateAndFixPlan: plan.days 不存在，创建空数组')
+    planCopy.days = []
+  } else if (!Array.isArray(planCopy.days)) {
+    console.error('validateAndFixPlan: plan.days 不是数组，转换为数组')
+    planCopy.days = []
+  }
+  
   // 修复 days 数组中的 day_index
-  if (plan.days && Array.isArray(plan.days)) {
-    plan.days = plan.days.map((day: any, index: number) => {
+  if (Array.isArray(planCopy.days) && planCopy.days.length > 0) {
+    planCopy.days = planCopy.days.map((day: any, index: number) => {
+      if (!day) {
+        console.warn(`validateAndFixPlan: days[${index}] 为空，创建默认对象`)
+        return {
+          day_index: index,
+          date: '',
+          attractions: [],
+          meals: [],
+          transportation: '',
+          accommodation: '',
+          description: ''
+        }
+      }
       if (day.day_index === undefined || day.day_index === null) {
         day.day_index = index
       }
@@ -427,51 +451,45 @@ const validateAndFixPlan = (plan: any, strict: boolean = false): TripPlan | null
       }
       return day
     })
-  } else if (plan.days === undefined || plan.days === null) {
-    // 如果没有 days 字段，尝试创建空数组（仅在非严格模式下）
-    if (!strict) {
-      console.warn('validateAndFixPlan: plan.days 不存在，创建空数组（宽松模式）')
-      plan.days = []
-    }
   }
   
   // 严格模式：保存前必须验证完整性
   if (strict) {
     // 确保 days 字段存在且是数组
-    if (!plan.days) {
+    if (!planCopy.days) {
       console.error('严格验证失败: 计划缺少 days 字段')
-      console.error('完整计划对象:', JSON.stringify(plan, null, 2))
+      console.error('完整计划对象:', JSON.stringify(planCopy, null, 2))
       return null
     }
     
-    if (!Array.isArray(plan.days)) {
-      console.error('严格验证失败: 计划 days 不是数组', typeof plan.days)
-      console.error('plan.days 值:', plan.days)
+    if (!Array.isArray(planCopy.days)) {
+      console.error('严格验证失败: 计划 days 不是数组', typeof planCopy.days)
+      console.error('plan.days 值:', planCopy.days)
       return null
     }
     
-    if (plan.days.length === 0) {
+    if (planCopy.days.length === 0) {
       console.error('严格验证失败: 计划 days 数组为空')
       return null
     }
     
     // 确保必要字段存在
-    if (!plan.city || !plan.start_date || !plan.end_date) {
+    if (!planCopy.city || !planCopy.start_date || !planCopy.end_date) {
       console.error('严格验证失败: 计划缺少必要字段')
       console.error('字段详情:', { 
-        city: plan.city, 
-        start_date: plan.start_date, 
-        end_date: plan.end_date,
-        hasCity: !!plan.city,
-        hasStartDate: !!plan.start_date,
-        hasEndDate: !!plan.end_date
+        city: planCopy.city, 
+        start_date: planCopy.start_date, 
+        end_date: planCopy.end_date,
+        hasCity: !!planCopy.city,
+        hasStartDate: !!planCopy.start_date,
+        hasEndDate: !!planCopy.end_date
       })
       return null
     }
     
     // 验证每个 day 的基本结构
-    for (let i = 0; i < plan.days.length; i++) {
-      const day = plan.days[i]
+    for (let i = 0; i < planCopy.days.length; i++) {
+      const day = planCopy.days[i]
       if (!day) {
         console.error(`严格验证失败: days[${i}] 为 null 或 undefined`)
         return null
@@ -482,7 +500,7 @@ const validateAndFixPlan = (plan: any, strict: boolean = false): TripPlan | null
     }
   }
   
-  return plan as TripPlan
+  return planCopy as TripPlan
 }
 
 // 检查计划是否已保存
@@ -669,6 +687,9 @@ const goBack = () => {
   router.push('/')
 }
 
+// 保存状态标记，防止重复保存
+const isSaving = ref(false)
+
 // 保存计划
 const handleSavePlan = async (planToSave?: TripPlan) => {
   if (!authStore.isAuthenticated) {
@@ -677,44 +698,104 @@ const handleSavePlan = async (planToSave?: TripPlan) => {
     return
   }
   
-  const plan = planToSave || tripPlan.value
+  // 检查加载状态
+  if (isLoading.value) {
+    message.warning('计划正在加载中，请稍候...')
+    return
+  }
+  
+  // 防止重复保存
+  if (isSaving.value) {
+    console.log('正在保存中，请勿重复点击')
+    return
+  }
+  
+  isSaving.value = true
+  
+  let plan = planToSave || tripPlan.value
   if (!plan) {
     message.error('没有可保存的计划')
     return
   }
   
-  // 使用严格模式验证计划数据完整性（保存前必须完整）
-  console.log('=== 保存计划前验证 ===')
-  console.log('原始计划对象:', plan)
-  console.log('计划类型:', typeof plan)
-  console.log('计划days:', plan.days)
-  console.log('计划days类型:', typeof plan.days)
-  console.log('计划days是否为数组:', Array.isArray(plan.days))
-  console.log('计划days长度:', plan.days?.length)
-  console.log('计划city:', plan.city)
-  console.log('计划start_date:', plan.start_date)
-  console.log('计划end_date:', plan.end_date)
+  // 详细检查每个字段
+  console.log('========== 保存计划调试信息 ==========')
+  console.log('1. 计划对象是否存在:', !!plan)
+  console.log('2. 完整的计划对象:', plan)
+  console.log('3. 计划的所有键:', Object.keys(plan))
+  console.log('4. days字段检查:')
+  console.log('   - plan.days存在:', !!plan.days)
+  console.log('   - plan.days值:', plan.days)
+  console.log('   - plan.days类型:', typeof plan.days)
+  console.log('   - plan.days是数组:', Array.isArray(plan.days))
+  console.log('   - plan.days长度:', plan.days?.length)
+  console.log('5. 其他字段检查:')
+  console.log('   - city:', plan.city, '存在:', !!plan.city)
+  console.log('   - start_date:', plan.start_date, '存在:', !!plan.start_date)
+  console.log('   - end_date:', plan.end_date, '存在:', !!plan.end_date)
+  console.log('   - weather_info:', plan.weather_info?.length, '存在:', !!plan.weather_info)
+  console.log('   - overall_suggestions:', plan.overall_suggestions?.substring(0, 50), '存在:', !!plan.overall_suggestions)
   
-  const validatedPlan = validateAndFixPlan(plan, true)
-  if (!validatedPlan) {
-    console.error('=== 计划数据验证失败 ===')
-    console.error('失败的计划对象:', JSON.stringify(plan, null, 2))
-    message.error('旅行计划数据不完整，无法保存。请确保计划包含完整的行程信息。')
-    return
+  // 检查days数组的详细内容
+  if (plan.days && Array.isArray(plan.days)) {
+    console.log('6. days数组详细检查:')
+    plan.days.forEach((day: any, index: number) => {
+      console.log(`   Day ${index}:`, {
+        day_index: day?.day_index,
+        date: day?.date,
+        attractions: day?.attractions?.length,
+        meals: day?.meals?.length,
+        transportation: day?.transportation,
+        accommodation: day?.accommodation
+      })
+    })
+  }
+  console.log('====================================')
+  
+  // 修复缺失的days字段
+  if (!plan.days || !Array.isArray(plan.days)) {
+    console.error('!!!!! 发现问题：plan.days不存在或不是数组 !!!!!')
+    console.error('尝试从 tripPlan.value 获取数据...')
+    
+    // 尝试从当前显示的 tripPlan 获取
+    if (tripPlan.value && tripPlan.value.days && Array.isArray(tripPlan.value.days)) {
+      console.log('从 tripPlan.value 恢复 days 数据')
+      plan = { ...tripPlan.value }
+    } else {
+      console.error('tripPlan.value 也没有有效的 days 数据')
+      plan.days = []
+    }
   }
   
-  console.log('=== 验证通过 ===')
-  console.log('验证后的计划:', validatedPlan)
+  const planToSaveValidated = plan as TripPlan
   
-  // 使用验证后的计划
-  const planToSaveValidated = validatedPlan
+  // 再次验证
+  if (!planToSaveValidated.days || planToSaveValidated.days.length === 0) {
+    console.error('!!!!! 修复失败：days数组为空 !!!!!')
+    console.error('当前 tripPlan.value:', tripPlan.value)
+    console.error('当前 tripStore.tripPlan:', tripStore.tripPlan)
+    
+    // 最后尝试从 store 获取
+    if (tripStore.tripPlan && tripStore.tripPlan.days && tripStore.tripPlan.days.length > 0) {
+      console.log('!!!!! 从 tripStore 恢复数据 !!!!!')
+      planToSaveValidated.days = tripStore.tripPlan.days
+      planToSaveValidated.city = planToSaveValidated.city || tripStore.tripPlan.city
+      planToSaveValidated.start_date = planToSaveValidated.start_date || tripStore.tripPlan.start_date
+      planToSaveValidated.end_date = planToSaveValidated.end_date || tripStore.tripPlan.end_date
+      planToSaveValidated.weather_info = planToSaveValidated.weather_info || tripStore.tripPlan.weather_info
+      planToSaveValidated.overall_suggestions = planToSaveValidated.overall_suggestions || tripStore.tripPlan.overall_suggestions
+    } else {
+      message.error('旅行计划没有行程数据，无法保存。请刷新页面重新生成计划。')
+      return
+    }
+  }
   
   try {
     // 构建请求数据（从计划中提取）
     const requestData: TripFormData = {
-      city: planToSaveValidated.city,
-      start_date: planToSaveValidated.start_date,
-      end_date: planToSaveValidated.end_date,
+      city: planToSaveValidated.city || '未知',
+      start_date: planToSaveValidated.start_date || '',
+      end_date: planToSaveValidated.end_date || '',
       travel_days: planToSaveValidated.days.length,
       transportation: planToSaveValidated.days[0]?.transportation || '公共交通',
       accommodation: planToSaveValidated.days[0]?.accommodation || '经济型酒店',
@@ -724,15 +805,23 @@ const handleSavePlan = async (planToSave?: TripPlan) => {
     
     // 调用新的保存 API，直接保存现有计划
     const { saveTripPlan } = await import('@/services/api')
-    await saveTripPlan(requestData, planToSaveValidated)
+    const result = await saveTripPlan(requestData, planToSaveValidated)
     
-    // 清除待保存的计划
-    sessionStorage.removeItem('pendingTripPlan')
-    isPlanSaved.value = true
-    message.success('计划已保存到历史记录')
+    if (result.success) {
+      // 清除待保存的计划
+      sessionStorage.removeItem('pendingTripPlan')
+      isPlanSaved.value = true
+      message.success('✅ 旅行计划已成功保存到历史记录！')
+      console.log('保存成功:', result)
+    } else {
+      message.error('保存失败：' + (result.message || '未知错误'))
+      console.error('保存失败:', result)
+    }
   } catch (error: any) {
     console.error('保存计划失败:', error)
-    message.error(error.message || '保存计划失败，请稍后重试')
+    message.error('❌ 保存计划失败：' + (error.message || '网络错误，请稍后重试'))
+  } finally {
+    isSaving.value = false
   }
 }
 

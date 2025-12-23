@@ -134,7 +134,8 @@ def save_trip_history(
         plan_data=plan.dict(),
         city=request.city,
         start_date=request.start_date,
-        end_date=request.end_date
+        end_date=request.end_date,
+        travel_days=request.travel_days
     )
     db.add(trip_history)
     db.commit()
@@ -145,7 +146,8 @@ def get_trip_history(
     db: Session,
     user_id: int,
     limit: int = 20,
-    offset: int = 0
+    offset: int = 0,
+    include_plan_data: bool = False  # 新增参数，控制是否返回完整计划数据
 ) -> List[Dict[str, Any]]:
     """获取用户的旅行历史"""
     trips = db.query(TripHistory).filter(
@@ -154,18 +156,30 @@ def get_trip_history(
         TripHistory.created_at.desc()
     ).offset(offset).limit(limit).all()
     
-    return [
-        {
-            "id": trip.id,
-            "city": trip.city,
-            "start_date": trip.start_date,
-            "end_date": trip.end_date,
-            "request_data": trip.request_data,
-            "plan_data": trip.plan_data,
-            "created_at": trip.created_at.isoformat()
-        }
-        for trip in trips
-    ]
+    result = []
+    for trip in trips:
+        try:
+            trip_dict = {
+                "id": trip.id,
+                "city": trip.city or "",
+                "start_date": trip.start_date or "",
+                "end_date": trip.end_date or "",
+                "created_at": trip.created_at.isoformat() if trip.created_at else datetime.utcnow().isoformat()
+            }
+            # 只有明确要求时才包含详细数据
+            if include_plan_data:
+                trip_dict["request_data"] = trip.request_data
+                trip_dict["plan_data"] = trip.plan_data
+            
+            result.append(trip_dict)
+        except Exception as e:
+            print(f"⚠️ 处理旅行记录 {trip.id} 时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 跳过有问题的记录，继续处理其他记录
+            continue
+    
+    return result
 
 
 def get_trip_by_id(db: Session, trip_id: int, user_id: int) -> Optional[Dict[str, Any]]:

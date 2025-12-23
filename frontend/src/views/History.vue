@@ -150,22 +150,60 @@ const pagination = {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 function formatDate(dateStr: string) {
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN')
+  try {
+    // 处理ISO格式的UTC时间
+    const date = new Date(dateStr)
+    // 检查日期是否有效
+    if (isNaN(date.getTime())) {
+      return dateStr
+    }
+    // 格式化为本地时间
+    return date.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    })
+  } catch (e) {
+    console.error('日期格式化失败:', e, dateStr)
+    return dateStr
+  }
 }
 
 async function loadTrips() {
   loading.value = true
   try {
     const token = localStorage.getItem('trip_planner_token')
+    // 不加载完整的plan_data，只加载基本信息
     const response = await axios.get(`${API_BASE_URL}/api/history/trips`, {
       headers: {
         Authorization: `Bearer ${token}`
+      },
+      params: {
+        include_plan_data: false  // 明确不加载详细数据
       }
     })
     
     if (response.data.success) {
-      trips.value = response.data.data || []
+      // 去重：根据 city + start_date + end_date 组合去重
+      const uniqueTrips = new Map()
+      const allTrips = response.data.data || []
+      
+      allTrips.forEach((trip: any) => {
+        const key = `${trip.city}-${trip.start_date}-${trip.end_date}`
+        // 保留最新的记录
+        if (!uniqueTrips.has(key) || new Date(trip.created_at) > new Date(uniqueTrips.get(key).created_at)) {
+          uniqueTrips.set(key, trip)
+        }
+      })
+      
+      trips.value = Array.from(uniqueTrips.values()).sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+      
+      console.log(`快速加载了 ${allTrips.length} 条记录，去重后 ${trips.value.length} 条（不含详细数据）`)
     }
   } catch (error: any) {
     message.error('加载旅行历史失败')
@@ -196,9 +234,34 @@ async function loadConversations() {
   }
 }
 
-function viewTrip(trip: any) {
-  selectedTrip.value = trip
-  tripModalVisible.value = true
+async function viewTrip(trip: any) {
+  // 如果trip已经有plan_data，直接显示
+  if (trip.plan_data) {
+    selectedTrip.value = trip
+    tripModalVisible.value = true
+    return
+  }
+  
+  // 否则需要加载详细数据
+  loading.value = true
+  try {
+    const token = localStorage.getItem('trip_planner_token')
+    const response = await axios.get(`${API_BASE_URL}/api/history/trips/${trip.id}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    
+    if (response.data.success) {
+      selectedTrip.value = response.data.data
+      tripModalVisible.value = true
+    }
+  } catch (error: any) {
+    message.error('加载计划详情失败')
+    console.error(error)
+  } finally {
+    loading.value = false
+  }
 }
 
 function loadTripPlan(trip: any) {
@@ -219,23 +282,17 @@ function loadTripPlan(trip: any) {
     }
   }
   
-  // 验证数据完整性
-  if (!planData.days || !Array.isArray(planData.days) || planData.days.length === 0) {
-    console.error('计划数据不完整:', planData)
-    message.error('该历史记录的计划数据不完整（缺少days字段），无法加载')
-    return
-  }
-  
-  if (!planData.city || !planData.start_date || !planData.end_date) {
-    message.error('该历史记录的计划数据缺少必要信息，无法加载')
-    return
-  }
-  
-  // 确保 days 数组中的每个 day 都有 day_index
+  // 修复数据（宽松模式）
   if (planData.days && Array.isArray(planData.days)) {
     planData.days = planData.days.map((day: any, index: number) => {
       if (day.day_index === undefined || day.day_index === null) {
         day.day_index = index
+      }
+      if (!day.attractions) {
+        day.attractions = []
+      }
+      if (!day.meals) {
+        day.meals = []
       }
       return day
     })

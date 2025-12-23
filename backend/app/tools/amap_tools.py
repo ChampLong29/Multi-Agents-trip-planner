@@ -234,15 +234,22 @@ class AmapWeatherTool(BaseTool):
             
             if weather_data.get("status") != "1":
                 error_msg = weather_data.get("info", "未知错误")
+                print(f"❌ 天气API返回错误: status={weather_data.get('status')}, info={error_msg}")
+                print(f"完整响应: {weather_data}")
                 return json.dumps({"error": f"天气查询失败: {error_msg}"})
             
             # 解析天气数据
             forecasts = weather_data.get("forecasts", [])
+            print(f"🔍 天气API响应 - forecasts数量: {len(forecasts)}")
             if not forecasts:
+                print(f"⚠️ 天气API返回成功但forecasts为空，完整响应: {weather_data}")
                 return json.dumps({"error": "未找到天气数据"})
             
             forecast = forecasts[0]
             casts = forecast.get("casts", [])
+            print(f"🔍 天气API响应 - casts数量: {len(casts)}")
+            if not casts:
+                print(f"⚠️ forecast存在但casts为空，forecast数据: {forecast}")
             
             result = []
             for cast in casts:
@@ -317,14 +324,21 @@ class AmapWeatherTool(BaseTool):
             
             if weather_data.get("status") != "1":
                 error_msg = weather_data.get("info", "未知错误")
+                print(f"❌ 天气API返回错误: status={weather_data.get('status')}, info={error_msg}")
+                print(f"完整响应: {weather_data}")
                 return json.dumps({"error": f"天气查询失败: {error_msg}"})
             
             forecasts = weather_data.get("forecasts", [])
+            print(f"🔍 天气API响应(异步) - forecasts数量: {len(forecasts)}")
             if not forecasts:
+                print(f"⚠️ 天气API返回成功但forecasts为空，完整响应: {weather_data}")
                 return json.dumps({"error": "未找到天气数据"})
             
             forecast = forecasts[0]
             casts = forecast.get("casts", [])
+            print(f"🔍 天气API响应(异步) - casts数量: {len(casts)}")
+            if not casts:
+                print(f"⚠️ forecast存在但casts为空，forecast数据: {forecast}")
             
             result = []
             for cast in casts:

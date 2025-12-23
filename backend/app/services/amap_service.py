@@ -86,10 +86,18 @@ class AmapService:
                 elif not tel_value or tel_value == "":
                     tel_value = None
                 
+                # 处理 address 字段：可能是字符串、列表或 None
+                address_value = poi_data.get("address", "")
+                if isinstance(address_value, list):
+                    # 如果是列表，取第一个元素或转为字符串
+                    address_value = address_value[0] if address_value else ""
+                elif not address_value:
+                    address_value = ""
+                
                 poi_info = POIInfo(
                     id=poi_data.get("id", ""),
                     name=poi_data.get("name", ""),
-                    address=poi_data.get("address", ""),
+                    address=address_value,
                     location=location,
                     type=poi_data.get("type", ""),
                     tel=tel_value,
@@ -120,6 +128,7 @@ class AmapService:
         try:
             # 调用LangChain工具
             result_str = self.weather_tool._run(city=city)
+            print(f"🔍 天气API原始响应: {result_str}")
             result = json.loads(result_str)
             
             if result.get("error"):
@@ -128,6 +137,13 @@ class AmapService:
             
             # 解析天气数据
             forecasts = result.get("forecasts", [])
+            print(f"📊 解析到的forecasts数量: {len(forecasts)}")
+            
+            if not forecasts:
+                print(f"⚠️ 警告: 天气API返回成功但forecasts为空")
+                print(f"完整响应数据: {result}")
+                return []
+            
             weather_list = []
             
             for forecast in forecasts:

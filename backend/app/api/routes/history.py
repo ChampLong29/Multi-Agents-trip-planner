@@ -23,18 +23,28 @@ router = APIRouter(prefix="/history", tags=["历史记录"])
 async def get_user_trips(
     limit: int = 20,
     offset: int = 0,
+    include_plan_data: bool = False,  # 新增查询参数
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """获取当前用户的旅行历史"""
-    trips = get_trip_history(db, current_user.id, limit=limit, offset=offset)
-    
-    return {
-        "success": True,
-        "message": "获取成功",
-        "data": trips,
-        "total": len(trips)
-    }
+    """获取当前用户的旅行历史（默认不包含详细计划数据）"""
+    try:
+        trips = get_trip_history(db, current_user.id, limit=limit, offset=offset, include_plan_data=include_plan_data)
+        
+        return {
+            "success": True,
+            "message": "获取成功",
+            "data": trips,
+            "total": len(trips)
+        }
+    except Exception as e:
+        print(f"❌ 获取旅行历史失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取旅行历史失败: {str(e)}"
+        )
 
 
 @router.get("/trips/{trip_id}", summary="获取单个旅行记录")

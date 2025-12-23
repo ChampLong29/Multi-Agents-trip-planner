@@ -123,7 +123,19 @@ export const useTripStore = defineStore('trip', () => {
         streamingData.value[agentKey] = update.data || []
       }
     } else if (update.type === 'complete' && update.plan) {
+      console.log('🔍 [tripStore] 收到complete事件，plan数据:')
+      console.log('  - plan对象:', update.plan)
+      console.log('  - plan.days存在:', !!update.plan.days)
+      console.log('  - plan.days类型:', typeof update.plan.days)
+      console.log('  - plan.days是数组:', Array.isArray(update.plan.days))
+      console.log('  - plan.days长度:', update.plan.days?.length)
+      if (update.plan.days && Array.isArray(update.plan.days) && update.plan.days.length > 0) {
+        console.log('  - 第一天数据:', update.plan.days[0])
+      }
+      
       tripPlan.value = update.plan
+      console.log('  - 已设置tripPlan.value')
+      
       // 标记所有进度为完成
       Object.keys(progress.value).forEach(key => {
         if (progress.value[key].status !== 'completed') {
