@@ -202,13 +202,50 @@ function viewTrip(trip: any) {
 }
 
 function loadTripPlan(trip: any) {
-  if (trip.plan_data) {
-    tripStore.setTripPlan(trip.plan_data)
-    sessionStorage.setItem('tripPlan', JSON.stringify(trip.plan_data))
-    message.success('计划已加载')
-    tripModalVisible.value = false
-    router.push('/result')
+  if (!trip.plan_data) {
+    message.error('该历史记录没有计划数据')
+    return
   }
+  
+  // 确保 plan_data 是对象格式
+  let planData = trip.plan_data
+  if (typeof planData === 'string') {
+    try {
+      planData = JSON.parse(planData)
+    } catch (e) {
+      console.error('解析计划数据失败:', e)
+      message.error('计划数据格式错误，无法加载')
+      return
+    }
+  }
+  
+  // 验证数据完整性
+  if (!planData.days || !Array.isArray(planData.days) || planData.days.length === 0) {
+    console.error('计划数据不完整:', planData)
+    message.error('该历史记录的计划数据不完整（缺少days字段），无法加载')
+    return
+  }
+  
+  if (!planData.city || !planData.start_date || !planData.end_date) {
+    message.error('该历史记录的计划数据缺少必要信息，无法加载')
+    return
+  }
+  
+  // 确保 days 数组中的每个 day 都有 day_index
+  if (planData.days && Array.isArray(planData.days)) {
+    planData.days = planData.days.map((day: any, index: number) => {
+      if (day.day_index === undefined || day.day_index === null) {
+        day.day_index = index
+      }
+      return day
+    })
+  }
+  
+  tripStore.setTripPlan(planData)
+  sessionStorage.setItem('tripPlan', JSON.stringify(planData))
+  message.success('计划已加载')
+  tripModalVisible.value = false
+  router.push('/result')
 }
 
 async function deleteTrip(tripId: number) {

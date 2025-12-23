@@ -405,6 +405,52 @@ const isLoading = ref(false)
 const isPlanSaved = ref(false)
 let map: any = null
 
+// 验证和修复计划数据
+const validateAndFixPlan = (plan: any): TripPlan | null => {
+  if (!plan) {
+    return null
+  }
+  
+  // 确保 days 字段存在且是数组
+  if (!plan.days) {
+    console.error('计划缺少 days 字段:', plan)
+    return null
+  }
+  
+  if (!Array.isArray(plan.days)) {
+    console.error('计划 days 不是数组:', typeof plan.days, plan.days)
+    return null
+  }
+  
+  if (plan.days.length === 0) {
+    console.error('计划 days 数组为空')
+    return null
+  }
+  
+  // 确保必要字段存在
+  if (!plan.city || !plan.start_date || !plan.end_date) {
+    console.error('计划缺少必要字段:', { city: plan.city, start_date: plan.start_date, end_date: plan.end_date })
+    return null
+  }
+  
+  // 修复 days 数组中的 day_index
+  plan.days = plan.days.map((day: any, index: number) => {
+    if (day.day_index === undefined || day.day_index === null) {
+      day.day_index = index
+    }
+    // 确保每个 day 都有必要的字段
+    if (!day.attractions) {
+      day.attractions = []
+    }
+    if (!day.meals) {
+      day.meals = []
+    }
+    return day
+  })
+  
+  return plan as TripPlan
+}
+
 // 检查计划是否已保存
 const checkPlanSaved = () => {
   if (!tripPlan.value || !authStore.isAuthenticated) {
@@ -424,19 +470,24 @@ const checkPlanSaved = () => {
 // 监听 store 中的计划更新
 watch(() => tripStore.tripPlan, (newPlan) => {
   if (newPlan) {
-    tripPlan.value = newPlan
-    sessionStorage.setItem('tripPlan', JSON.stringify(newPlan))
-    isLoading.value = false
-    // 加载景点图片和初始化地图
-    nextTick(() => {
-      loadAttractionPhotos()
-      if (map) {
-        map.destroy()
-      }
-      initMap()
-      // 平滑滚动到顶部
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    })
+    const validatedPlan = validateAndFixPlan(newPlan)
+    if (validatedPlan) {
+      tripPlan.value = validatedPlan
+      sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
+      isLoading.value = false
+      // 加载景点图片和初始化地图
+      nextTick(() => {
+        loadAttractionPhotos()
+        if (map) {
+          map.destroy()
+        }
+        initMap()
+        // 平滑滚动到顶部
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      })
+    } else {
+      console.warn('store 中的计划数据不完整，忽略更新')
+    }
   }
 }, { immediate: true })
 
@@ -459,16 +510,30 @@ watch(() => tripStore.streamingData, (newData) => {
 onMounted(async () => {
   // 优先从 store 获取
   if (tripStore.tripPlan) {
-    tripPlan.value = tripStore.tripPlan
+    const validatedPlan = validateAndFixPlan(tripStore.tripPlan)
+    if (validatedPlan) {
+      tripPlan.value = validatedPlan
+    } else {
+      console.warn('store 中的计划数据不完整，清除')
+      tripStore.setTripPlan(null)
+    }
   } else {
     // 从 sessionStorage 获取
     const data = sessionStorage.getItem('tripPlan')
     if (data) {
       try {
-        tripPlan.value = JSON.parse(data)
-        tripStore.setTripPlan(tripPlan.value)
+        const parsedPlan = JSON.parse(data)
+        const validatedPlan = validateAndFixPlan(parsedPlan)
+        if (validatedPlan) {
+          tripPlan.value = validatedPlan
+          tripStore.setTripPlan(validatedPlan)
+        } else {
+          console.warn('sessionStorage 中的计划数据不完整，清除缓存')
+          sessionStorage.removeItem('tripPlan')
+        }
       } catch (e) {
         console.error('解析旅行计划失败:', e)
+        sessionStorage.removeItem('tripPlan')
       }
     } else {
       // 如果没有数据，但正在请求中，等待规划完成
@@ -477,14 +542,19 @@ onMounted(async () => {
         // 监听规划完成
         const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
           if (newPlan) {
-            tripPlan.value = newPlan
-            sessionStorage.setItem('tripPlan', JSON.stringify(newPlan))
-            isLoading.value = false
-            stopWatcher()
-            nextTick(() => {
-              loadAttractionPhotos()
-              initMap()
-            })
+            const validatedPlan = validateAndFixPlan(newPlan)
+            if (validatedPlan) {
+              tripPlan.value = validatedPlan
+              sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
+              isLoading.value = false
+              stopWatcher()
+              nextTick(() => {
+                loadAttractionPhotos()
+                initMap()
+              })
+            } else {
+              console.warn('规划完成的计划数据不完整')
+            }
           }
         }, { immediate: true })
         return
@@ -509,14 +579,19 @@ onMounted(async () => {
     // 监听规划完成
     const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
       if (newPlan && !tripPlan.value) {
-        tripPlan.value = newPlan
-        sessionStorage.setItem('tripPlan', JSON.stringify(newPlan))
-        isLoading.value = false
-        stopWatcher()
-        nextTick(() => {
-          loadAttractionPhotos()
-          initMap()
-        })
+        const validatedPlan = validateAndFixPlan(newPlan)
+        if (validatedPlan) {
+          tripPlan.value = validatedPlan
+          sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
+          isLoading.value = false
+          stopWatcher()
+          nextTick(() => {
+            loadAttractionPhotos()
+            initMap()
+          })
+        } else {
+          console.warn('规划完成的计划数据不完整')
+        }
       }
     }, { immediate: true })
   }
@@ -530,10 +605,10 @@ onMounted(async () => {
     if (pendingPlan) {
       try {
         const plan = JSON.parse(pendingPlan)
-        // 验证计划数据完整性后再保存
-        if (plan && plan.days && Array.isArray(plan.days) && plan.days.length > 0) {
+        const validatedPlan = validateAndFixPlan(plan)
+        if (validatedPlan) {
           // 自动保存计划
-          await handleSavePlan(plan)
+          await handleSavePlan(validatedPlan)
         } else {
           console.warn('待保存的计划数据不完整，跳过自动保存')
           sessionStorage.removeItem('pendingTripPlan')
