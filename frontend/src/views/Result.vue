@@ -565,6 +565,18 @@ const handleSavePlan = async (planToSave?: TripPlan) => {
     return
   }
   
+  // 验证计划数据完整性
+  if (!plan.days || !Array.isArray(plan.days) || plan.days.length === 0) {
+    message.error('旅行计划数据不完整，无法保存')
+    console.error('计划数据:', plan)
+    return
+  }
+  
+  if (!plan.city || !plan.start_date || !plan.end_date) {
+    message.error('旅行计划缺少必要信息，无法保存')
+    return
+  }
+  
   try {
     // 构建请求数据（从计划中提取）
     const requestData: TripFormData = {
