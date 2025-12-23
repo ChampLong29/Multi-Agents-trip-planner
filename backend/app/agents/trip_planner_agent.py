@@ -11,8 +11,6 @@ from ..services.llm_service import get_llm
 from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
 from ..config import get_settings
 from ..tools import AmapPOISearchTool, AmapWeatherTool, AmapRouteTool
-from ..tools.mcp_adapter import create_mcp_tools
-from hello_agents.tools import MCPTool
 
 # ============ Agent提示词 ============
 
@@ -180,29 +178,10 @@ class MultiAgentTripPlanner:
             self.weather_tool = AmapWeatherTool()
             self.route_tool = AmapRouteTool()
             
-            # 创建 MCPTool 实例（可选，如果需要额外的 MCP 工具）
-            mcp_tools = []
-            try:
-                if settings.amap_api_key:
-                    print("  - 创建 MCP 高德地图工具...")
-                    mcp_tool = MCPTool(
-                        name="amap_mcp",
-                        description="高德地图 MCP 服务",
-                        server_command=["uvx", "amap-mcp-server"],
-                        env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
-                        auto_expand=True
-                    )
-                    # 将 MCP 工具转换为 LangChain 工具
-                    mcp_tools = create_mcp_tools(mcp_tool)
-                    print(f"   成功加载 {len(mcp_tools)} 个 MCP 工具")
-            except Exception as e:
-                print(f"  ⚠️  MCP 工具初始化失败（将仅使用 LangChain 工具）: {str(e)}")
-                mcp_tools = []
-            
-            # 合并所有工具
-            attraction_tools = [self.poi_tool] + mcp_tools
-            weather_tools = [self.weather_tool] + mcp_tools
-            hotel_tools = [self.poi_tool] + mcp_tools
+            # 使用 LangChain 工具
+            attraction_tools = [self.poi_tool]
+            weather_tools = [self.weather_tool]
+            hotel_tools = [self.poi_tool]
             
             # 创建景点搜索Agent
             print("  - 创建景点搜索Agent...")
@@ -309,17 +288,35 @@ class MultiAgentTripPlanner:
             
             return SimpleAgentWrapper(chain, name)
     
-    def plan_trip(self, request: TripRequest) -> TripPlan:
+    def plan_trip(self, request: TripRequest, user_id: Optional[int] = None, session_id: Optional[str] = None) -> TripPlan:
         """
         使用多智能体协作生成旅行计划
 
         Args:
             request: 旅行请求
+            user_id: 用户ID（可选，用于加载记忆）
+            session_id: 会话ID（可选，用于对话历史）
 
         Returns:
             旅行计划
         """
         try:
+            # 加载用户记忆上下文（如果提供了user_id）
+            memory_context = ""
+            if user_id:
+                from sqlalchemy.orm import Session
+                from ..models.database import SessionLocal
+                from ..services.memory_service import build_memory_context
+                
+                # 获取数据库会话
+                db = SessionLocal()
+                try:
+                    memory_context = build_memory_context(db, user_id, request)
+                    if memory_context:
+                        print(f"📝 加载用户记忆上下文...")
+                finally:
+                    db.close()
+            
             print(f"\n{'='*60}")
             print(f"🚀 开始多智能体协作规划旅行...")
             print(f"目的地: {request.city}")
@@ -360,7 +357,7 @@ class MultiAgentTripPlanner:
 
             # 步骤4: 行程规划Agent整合信息生成计划
             print("📋 步骤4: 生成行程计划...")
-            planner_query = self._build_planner_query(request, attraction_response, weather_response, hotel_response)
+            planner_query = self._build_planner_query(request, attraction_response, weather_response, hotel_response, memory_context)
             if hasattr(self.planner_agent, 'invoke'):
                 planner_result = self.planner_agent.invoke({"input": planner_query})
                 planner_response = planner_result.get("output", str(planner_result))
@@ -396,7 +393,7 @@ class MultiAgentTripPlanner:
         query = f"请搜索{request.city}的{keywords}相关景点。关键词使用'{keywords}'，城市是'{request.city}'。"
         return query
 
-    def _build_planner_query(self, request: TripRequest, attractions: str, weather: str, hotels: str = "") -> str:
+    def _build_planner_query(self, request: TripRequest, attractions: str, weather: str, hotels: str = "", memory_context: str = "") -> str:
         """构建行程规划查询"""
         query = f"""请根据以下信息生成{request.city}的{request.travel_days}天旅行计划:
 
@@ -408,7 +405,12 @@ class MultiAgentTripPlanner:
 - 住宿: {request.accommodation}
 - 偏好: {', '.join(request.preferences) if request.preferences else '无'}
 
-**景点信息:**
+"""
+        # 添加用户记忆上下文
+        if memory_context:
+            query += f"**用户历史偏好和对话记忆:**\n{memory_context}\n\n"
+        
+        query += f"""**景点信息:**
 {attractions}
 
 **天气信息:**
@@ -424,6 +426,7 @@ class MultiAgentTripPlanner:
 3. 考虑景点之间的距离和交通方式
 4. 返回完整的JSON格式数据
 5. 景点的经纬度坐标要真实准确
+6. 如果提供了用户历史偏好，请参考这些偏好来优化计划
 """
         if request.free_text_input:
             query += f"\n**额外要求:** {request.free_text_input}"
@@ -460,18 +463,109 @@ class MultiAgentTripPlanner:
             else:
                 raise ValueError("响应中未找到JSON数据")
             
-            # 解析JSON
-            data = json.loads(json_str)
+            # 先尝试直接解析，如果失败再修复
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # 只有在解析失败时才尝试修复
+                print(f"⚠️  首次JSON解析失败，尝试修复...")
+                json_str = self._fix_json_string(json_str)
+                data = json.loads(json_str)
+            
+            # 确保 day_index 从 0 开始
+            if "days" in data and isinstance(data["days"], list):
+                for i, day in enumerate(data["days"]):
+                    if isinstance(day, dict):
+                        day["day_index"] = i
             
             # 转换为TripPlan对象
             trip_plan = TripPlan(**data)
             
             return trip_plan
             
+        except json.JSONDecodeError as e:
+            print(f"⚠️  JSON解析失败: {str(e)}")
+            print(f"   错误位置: line {e.lineno}, column {e.colno}")
+            print(f"   尝试修复JSON...")
+            try:
+                # 尝试修复并重新解析
+                fixed_json = self._fix_json_string(response[json_start:json_end] if 'json_str' in locals() else response)
+                data = json.loads(fixed_json)
+                if "days" in data and isinstance(data["days"], list):
+                    for i, day in enumerate(data["days"]):
+                        if isinstance(day, dict):
+                            day["day_index"] = i
+                trip_plan = TripPlan(**data)
+                print(f"   ✅ JSON修复成功")
+                return trip_plan
+            except Exception as e2:
+                print(f"   ❌ JSON修复失败: {str(e2)}")
+                print(f"   将使用备用方案生成计划")
+                return self._create_fallback_plan(request)
         except Exception as e:
             print(f"⚠️  解析响应失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
             print(f"   将使用备用方案生成计划")
             return self._create_fallback_plan(request)
+    
+    def _fix_json_string(self, json_str: str) -> str:
+        """尝试修复常见的 JSON 格式问题（保守策略）"""
+        import re
+        
+        fixed_json = json_str
+        
+        # 1. 移除 JSON 中的注释（如果 LLM 添加了注释）
+        # 只在字符串外移除注释
+        fixed_json = re.sub(r'//.*?$', '', fixed_json, flags=re.MULTILINE)
+        fixed_json = re.sub(r'/\*.*?\*/', '', fixed_json, flags=re.DOTALL)
+        
+        # 2. 修复末尾的逗号（在对象和数组末尾）
+        fixed_json = re.sub(r',(\s*[}\]])', r'\1', fixed_json)
+        
+        # 3. 尝试修复未终止的字符串（保守策略）
+        # 只在确实有问题时才修复
+        try:
+            # 先测试是否能解析
+            json.loads(fixed_json)
+            return fixed_json
+        except json.JSONDecodeError as e:
+            # 如果是字符串相关的错误，尝试修复
+            if 'Unterminated string' in str(e) or 'Expecting' in str(e):
+                # 尝试在错误位置附近修复
+                lines = fixed_json.split('\n')
+                if e.lineno <= len(lines):
+                    error_line = lines[e.lineno - 1]
+                    # 如果行尾有未闭合的引号，尝试闭合
+                    if error_line.count('"') % 2 == 1:
+                        # 检查是否在字符串中
+                        quote_count = 0
+                        escape = False
+                        for char in error_line:
+                            if escape:
+                                escape = False
+                                continue
+                            if char == '\\':
+                                escape = True
+                                continue
+                            if char == '"':
+                                quote_count += 1
+                        
+                        # 如果引号数为奇数，可能是未闭合
+                        if quote_count % 2 == 1:
+                            # 在行尾添加闭合引号（如果还没有）
+                            if not error_line.rstrip().endswith('"'):
+                                lines[e.lineno - 1] = error_line.rstrip() + '"'
+                                fixed_json = '\n'.join(lines)
+                
+                # 再次尝试解析
+                try:
+                    json.loads(fixed_json)
+                    return fixed_json
+                except:
+                    pass
+        
+        return fixed_json
     
     def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
         """创建备用计划(当Agent失败时)"""

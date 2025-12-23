@@ -18,6 +18,11 @@ let currentRequestController: AbortController | null = null
 // 请求拦截器
 apiClient.interceptors.request.use(
   (config) => {
+    // 添加JWT token
+    const token = localStorage.getItem('trip_planner_token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     console.log('发送请求:', config.method?.toUpperCase(), config.url)
     return config
   },
@@ -35,6 +40,19 @@ apiClient.interceptors.response.use(
   },
   (error) => {
     console.error('响应错误:', error.response?.status, error.message)
+    
+    // 处理401错误（token过期）
+    if (error.response?.status === 401) {
+      // 清除token和用户信息
+      localStorage.removeItem('trip_planner_token')
+      localStorage.removeItem('trip_planner_user')
+      
+      // 如果不在登录页，跳转到登录页
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login'
+      }
+    }
+    
     return Promise.reject(error)
   }
 )
@@ -173,7 +191,8 @@ export async function generateTripPlanStream(
                   finalPlan = {
                     success: true,
                     message: data.message || '旅行计划生成成功',
-                    data: data.plan
+                    data: data.plan,
+                    requires_login: data.requires_login ?? false
                   }
                 } else if (data.type === 'error') {
                   reject(new Error(data.message || '生成旅行计划失败'))
@@ -196,7 +215,8 @@ export async function generateTripPlanStream(
               finalPlan = {
                 success: true,
                 message: data.message || '旅行计划生成成功',
-                data: data.plan
+                data: data.plan,
+                requires_login: data.requires_login ?? false
               }
             }
           } catch (error) {
@@ -235,6 +255,28 @@ export function cancelCurrentRequest() {
   if (currentRequestController) {
     currentRequestController.abort()
     currentRequestController = null
+  }
+}
+
+/**
+ * 保存旅行计划到历史记录
+ */
+export async function saveTripPlan(
+  request: TripFormData,
+  plan: TripPlan
+): Promise<{ success: boolean; message: string; data?: any }> {
+  try {
+    const response = await apiClient.post(
+      '/api/history/trips/save',
+      {
+        request,
+        plan
+      }
+    )
+    return response.data
+  } catch (error: any) {
+    console.error('保存旅行计划失败:', error)
+    throw new Error(error.response?.data?.detail || error.message || '保存计划失败')
   }
 }
 

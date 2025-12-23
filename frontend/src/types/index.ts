@@ -64,6 +64,8 @@ export interface WeatherInfo {
   night_temp: number
   wind_direction: string
   wind_power: string
+  clothing_suggestion?: string
+  activity_suggestion?: string
 }
 
 export interface TripPlan {
@@ -91,5 +93,13 @@ export interface TripPlanResponse {
   success: boolean
   message: string
   data?: TripPlan
+  requires_login?: boolean  // 是否需要登录以保存计划
+}
+
+export interface UserInfo {
+  id: number
+  username: string
+  email: string
+  created_at: string
 }
 

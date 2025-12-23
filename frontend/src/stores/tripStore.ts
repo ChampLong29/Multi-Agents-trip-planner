@@ -17,6 +17,7 @@ export interface StreamingData {
   message?: string
   data?: any
   plan?: TripPlan
+  requires_login?: boolean  // 是否需要登录以保存计划
 }
 
 export const useTripStore = defineStore('trip', () => {
@@ -25,6 +26,7 @@ export const useTripStore = defineStore('trip', () => {
   const currentRequestId = ref<string | null>(null)
   const tripPlan = ref<TripPlan | null>(null)
   const error = ref<string | null>(null)
+  const formData = ref<TripFormData | null>(null)  // 保存表单数据
   
   // 进度信息
   const progress = ref<Record<string, AgentProgress>>({
@@ -159,6 +161,7 @@ export const useTripStore = defineStore('trip', () => {
     currentRequestId.value = null
     tripPlan.value = null
     error.value = null
+    formData.value = null
     Object.keys(progress.value).forEach(key => {
       progress.value[key] = {
         agent: key as any,
@@ -174,6 +177,34 @@ export const useTripStore = defineStore('trip', () => {
     }
   }
   
+  function saveFormData(data: TripFormData) {
+    formData.value = data
+    // 同时保存到 sessionStorage
+    sessionStorage.setItem('tripFormData', JSON.stringify(data))
+  }
+  
+  function getFormData(): TripFormData | null {
+    // 优先从 store 获取
+    if (formData.value) {
+      return formData.value
+    }
+    // 从 sessionStorage 获取
+    const saved = sessionStorage.getItem('tripFormData')
+    if (saved) {
+      try {
+        return JSON.parse(saved)
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+  
+  function clearFormData() {
+    formData.value = null
+    sessionStorage.removeItem('tripFormData')
+  }
+  
   return {
     // 状态
     isRequesting,
@@ -182,6 +213,7 @@ export const useTripStore = defineStore('trip', () => {
     error,
     progress,
     streamingData,
+    formData,
     
     // 计算属性
     overallProgress,
@@ -194,7 +226,10 @@ export const useTripStore = defineStore('trip', () => {
     finishRequest,
     setTripPlan,
     setError,
-    reset
+    reset,
+    saveFormData,
+    getFormData,
+    clearFormData
   }
 })
 

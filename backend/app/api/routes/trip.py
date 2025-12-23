@@ -2,16 +2,25 @@
 
 import json
 import hashlib
-from typing import Dict
-from fastapi import APIRouter, HTTPException
+import uuid
+from typing import Dict, Optional
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 from ...models.schemas import (
     TripRequest,
     TripPlanResponse,
     ErrorResponse
 )
+from ...models.database import get_db, User
 from ...agents.trip_planner_agent import get_trip_planner_agent
 from ...agents.multi_agent_system import get_multi_agent_planner
+from ...services.auth_service import get_current_user_optional
+from ...services.memory_service import (
+    save_trip_history,
+    update_preferences_from_trip,
+    save_conversation
+)
 
 # 请求去重缓存（简单实现，生产环境应使用Redis等）
 _request_cache: Dict[str, TripPlanResponse] = {}
@@ -32,7 +41,13 @@ def _get_request_hash(request: TripRequest) -> str:
     summary="生成旅行计划",
     description="根据用户输入的旅行需求,生成详细的旅行计划"
 )
-async def plan_trip(request: TripRequest):
+async def plan_trip(
+    request: TripRequest,
+    http_request: Request,
+    db: Session = Depends(get_db)
+):
+    # 获取当前用户（可选）
+    current_user = get_current_user_optional(http_request, db)
     """
     生成旅行计划
 
@@ -60,16 +75,48 @@ async def plan_trip(request: TripRequest):
         print("🔄 获取多智能体系统实例...")
         agent = get_trip_planner_agent()
 
-        # 生成旅行计划
+        # 生成会话ID（用于对话历史）
+        session_id = str(uuid.uuid4())
+        user_id = current_user.id if current_user else None
+
+        # 生成旅行计划（传入user_id和session_id以支持记忆）
         print("🚀 开始生成旅行计划...")
-        trip_plan = agent.plan_trip(request)
+        trip_plan = agent.plan_trip(request, user_id=user_id, session_id=session_id)
 
         print("✅ 旅行计划生成成功,准备返回响应\n")
+
+        # 如果用户已登录，保存历史记录
+        if current_user:
+            try:
+                # 保存旅行历史
+                save_trip_history(db, current_user.id, request, trip_plan)
+                
+                # 更新用户偏好
+                update_preferences_from_trip(db, current_user.id, request)
+                
+                # 保存对话历史
+                save_conversation(
+                    db,
+                    current_user.id,
+                    session_id,
+                    "user",
+                    f"请求规划{request.city}的{request.travel_days}天旅行计划"
+                )
+                save_conversation(
+                    db,
+                    current_user.id,
+                    session_id,
+                    "assistant",
+                    f"已生成{request.city}的{request.travel_days}天旅行计划"
+                )
+            except Exception as e:
+                print(f"⚠️ 保存历史记录失败: {str(e)}")
 
         response = TripPlanResponse(
             success=True,
             message="旅行计划生成成功",
-            data=trip_plan
+            data=trip_plan,
+            requires_login=current_user is None  # 如果用户未登录，提示需要登录
         )
         
         # 缓存结果（限制缓存大小，避免内存溢出）
@@ -93,7 +140,13 @@ async def plan_trip(request: TripRequest):
     summary="流式生成旅行计划",
     description="根据用户输入的旅行需求,流式生成详细的旅行计划(SSE格式)"
 )
-async def plan_trip_stream(request: TripRequest):
+async def plan_trip_stream(
+    request: TripRequest,
+    http_request: Request,
+    db: Session = Depends(get_db)
+):
+    # 获取当前用户（可选）
+    current_user = get_current_user_optional(http_request, db)
     """
     流式生成旅行计划
     
@@ -104,6 +157,10 @@ async def plan_trip_stream(request: TripRequest):
         Server-Sent Events 流
     """
     async def event_generator():
+        session_id = str(uuid.uuid4())
+        user_id = current_user.id if current_user else None
+        trip_plan = None
+        
         try:
             # 发送开始事件
             yield f"data: {json.dumps({'type': 'start', 'message': '开始生成旅行计划'}, ensure_ascii=False)}\n\n"
@@ -112,11 +169,46 @@ async def plan_trip_stream(request: TripRequest):
             planner = get_multi_agent_planner()
             
             # 流式生成计划
-            async for event in planner.plan_trip_stream(request):
+            async for event in planner.plan_trip_stream(request, user_id=user_id, session_id=session_id):
+                # 如果是完成事件，添加 requires_login 字段
+                if event.get("type") == "complete":
+                    event["requires_login"] = current_user is None
+                
                 yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                
+                # 保存最终计划
+                if event.get("type") == "complete" and event.get("plan"):
+                    trip_plan = event.get("plan")
             
-            # 发送完成事件
-            yield f"data: {json.dumps({'type': 'complete', 'message': '旅行计划生成完成'}, ensure_ascii=False)}\n\n"
+            # 如果用户已登录，保存历史记录
+            if current_user and trip_plan:
+                try:
+                    from ...models.schemas import TripPlan
+                    plan_obj = TripPlan(**trip_plan)
+                    
+                    # 保存旅行历史
+                    save_trip_history(db, current_user.id, request, plan_obj)
+                    
+                    # 更新用户偏好
+                    update_preferences_from_trip(db, current_user.id, request)
+                    
+                    # 保存对话历史
+                    save_conversation(
+                        db,
+                        current_user.id,
+                        session_id,
+                        "user",
+                        f"请求规划{request.city}的{request.travel_days}天旅行计划"
+                    )
+                    save_conversation(
+                        db,
+                        current_user.id,
+                        session_id,
+                        "assistant",
+                        f"已生成{request.city}的{request.travel_days}天旅行计划"
+                    )
+                except Exception as e:
+                    print(f"⚠️ 保存历史记录失败: {str(e)}")
             
         except Exception as e:
             error_event = {

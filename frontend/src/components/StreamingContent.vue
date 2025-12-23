@@ -14,13 +14,22 @@
     </a-card>
 
     <a-card v-if="weather.length > 0" title="🌤️ 天气信息" class="content-card">
-      <a-list :data-source="weather" :grid="{ gutter: 16, column: 3 }">
+      <a-list :data-source="weather" :grid="{ gutter: 16, column: 2 }">
         <template #renderItem="{ item }">
           <a-list-item>
             <a-card size="small" class="weather-card">
               <div class="weather-date">{{ item.date }}</div>
               <div class="weather-temp">{{ item.day_temp }}°C / {{ item.night_temp }}°C</div>
               <div class="weather-desc">{{ item.day_weather }}</div>
+              <a-divider style="margin: 8px 0;" />
+              <div v-if="item.clothing_suggestion" class="weather-suggestion">
+                <div class="suggestion-label">👔 穿着建议:</div>
+                <div class="suggestion-content">{{ item.clothing_suggestion }}</div>
+              </div>
+              <div v-if="item.activity_suggestion" class="weather-suggestion" style="margin-top: 8px;">
+                <div class="suggestion-label">🎯 活动建议:</div>
+                <div class="suggestion-content">{{ item.activity_suggestion }}</div>
+              </div>
             </a-card>
           </a-list-item>
         </template>
@@ -115,5 +124,24 @@ const hotels = computed(() => store.streamingData.hotels)
 .weather-desc {
   font-size: 14px;
   color: #333;
+}
+
+.weather-suggestion {
+  margin-top: 8px;
+  text-align: left;
+}
+
+.suggestion-label {
+  font-weight: 600;
+  color: #333;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.suggestion-content {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 </style>

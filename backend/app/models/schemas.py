@@ -115,6 +115,8 @@ class WeatherInfo(BaseModel):
     night_temp: Union[int, str] = Field(default=0, description="夜间温度")
     wind_direction: str = Field(default="", description="风向")
     wind_power: str = Field(default="", description="风力")
+    clothing_suggestion: str = Field(default="", description="穿着建议")
+    activity_suggestion: str = Field(default="", description="活动建议（基于天气）")
 
     @field_validator('day_temp', 'night_temp', mode='before')
     @classmethod
@@ -155,6 +157,7 @@ class TripPlanResponse(BaseModel):
     success: bool = Field(..., description="是否成功")
     message: str = Field(default="", description="消息")
     data: Optional[TripPlan] = Field(default=None, description="旅行计划数据")
+    requires_login: bool = Field(default=False, description="是否需要登录以保存计划")
 
 
 class POIInfo(BaseModel):
@@ -203,4 +206,43 @@ class ErrorResponse(BaseModel):
     success: bool = Field(default=False, description="是否成功")
     message: str = Field(..., description="错误消息")
     error_code: Optional[str] = Field(default=None, description="错误代码")
+
+
+# ============ 认证相关模型 ============
+
+class UserRegister(BaseModel):
+    """用户注册请求"""
+    username: str = Field(..., min_length=3, max_length=50, description="用户名")
+    email: str = Field(..., description="邮箱")
+    password: str = Field(..., min_length=6, description="密码")
+
+
+class UserLogin(BaseModel):
+    """用户登录请求"""
+    username: str = Field(..., description="用户名或邮箱")
+    password: str = Field(..., description="密码")
+
+
+class Token(BaseModel):
+    """Token响应"""
+    access_token: str = Field(..., description="访问令牌")
+    token_type: str = Field(default="bearer", description="令牌类型")
+
+
+class UserInfo(BaseModel):
+    """用户信息"""
+    id: int = Field(..., description="用户ID")
+    username: str = Field(..., description="用户名")
+    email: str = Field(..., description="邮箱")
+    created_at: str = Field(..., description="创建时间")
+
+    class Config:
+        from_attributes = True
+
+
+class UserResponse(BaseModel):
+    """用户响应"""
+    success: bool = Field(..., description="是否成功")
+    message: str = Field(default="", description="消息")
+    data: Optional[UserInfo] = Field(default=None, description="用户数据")
 

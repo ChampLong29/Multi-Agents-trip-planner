@@ -6,6 +6,29 @@
         ← 返回首页
       </a-button>
       <a-space size="middle">
+        <!-- 保存计划按钮 -->
+        <a-button 
+          v-if="!editMode && !authStore.isAuthenticated" 
+          @click="handleSavePlan" 
+          type="primary"
+        >
+          💾 登录保存此计划
+        </a-button>
+        <a-button 
+          v-if="!editMode && authStore.isAuthenticated && !isPlanSaved" 
+          @click="handleSavePlan" 
+          type="primary"
+        >
+          💾 保存到我的历史
+        </a-button>
+        <a-button 
+          v-if="!editMode && authStore.isAuthenticated && isPlanSaved" 
+          type="default"
+          disabled
+        >
+          ✅ 已保存
+        </a-button>
+        
         <a-button v-if="!editMode" @click="toggleEditMode" type="default">
           ✏️ 编辑行程
         </a-button>
@@ -115,7 +138,7 @@
                 </div>
                 <div class="info-item">
                   <span class="info-label">💡 建议:</span>
-                  <span class="info-value">{{ tripPlan.overall_suggestions }}</span>
+                  <span class="info-value suggestions-text">{{ formatSuggestions(tripPlan.overall_suggestions) }}</span>
                 </div>
               </div>
             </a-card>
@@ -192,7 +215,7 @@
                 :data-source="day.attractions"
                 :grid="{ gutter: 16, column: 2 }"
               >
-                <template #renderItem="{ item, index }">
+                <template #renderItem="{ item, index: attrIndex }">
                   <a-list-item>
                     <a-card :title="item.name" size="small" class="attraction-card">
                       <!-- 编辑模式下的操作按钮 -->
@@ -200,22 +223,22 @@
                         <a-space>
                           <a-button
                             size="small"
-                            @click="moveAttraction(day.day_index, index, 'up')"
-                            :disabled="index === 0"
+                            @click="moveAttraction(index, attrIndex, 'up')"
+                            :disabled="attrIndex === 0"
                           >
                             ↑
                           </a-button>
                           <a-button
                             size="small"
-                            @click="moveAttraction(day.day_index, index, 'down')"
-                            :disabled="index === day.attractions.length - 1"
+                            @click="moveAttraction(index, attrIndex, 'down')"
+                            :disabled="attrIndex === day.attractions.length - 1"
                           >
                             ↓
                           </a-button>
                           <a-button
                             size="small"
                             danger
-                            @click="deleteAttraction(day.day_index, index)"
+                            @click="deleteAttraction(index, attrIndex)"
                           >
                             🗑️
                           </a-button>
@@ -293,10 +316,10 @@
           </a-collapse>
         </a-card>
 
-        <a-card id="weather" v-if="tripPlan.weather_info && tripPlan.weather_info.length > 0" title="天气信息" style="margin-top: 20px" :bordered="false">
+        <a-card id="weather" v-if="tripPlan.weather_info && tripPlan.weather_info.length > 0" title="🌤️ 天气信息" style="margin-top: 20px" :bordered="false">
         <a-list
           :data-source="tripPlan.weather_info"
-          :grid="{ gutter: 16, column: 3 }"
+          :grid="{ gutter: 16, column: 2 }"
         >
           <template #renderItem="{ item }">
             <a-list-item>
@@ -318,6 +341,15 @@
                 </div>
                 <div class="weather-wind">
                   💨 {{ item.wind_direction }} {{ item.wind_power }}
+                </div>
+                <a-divider style="margin: 12px 0;" />
+                <div v-if="item.clothing_suggestion" class="weather-suggestion">
+                  <div class="suggestion-label">👔 穿着建议:</div>
+                  <div class="suggestion-content">{{ item.clothing_suggestion }}</div>
+                </div>
+                <div v-if="item.activity_suggestion" class="weather-suggestion" style="margin-top: 12px;">
+                  <div class="suggestion-label">🎯 活动建议:</div>
+                  <div class="suggestion-content">{{ item.activity_suggestion }}</div>
                 </div>
               </a-card>
             </a-list-item>
@@ -347,7 +379,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { DownOutlined } from '@ant-design/icons-vue'
@@ -355,10 +387,13 @@ import AMapLoader from '@amap/amap-jsapi-loader'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import { useTripStore } from '@/stores/tripStore'
-import type { TripPlan } from '@/types'
+import { useAuthStore } from '@/stores/authStore'
+import type { TripPlan, TripFormData } from '@/types'
+import { generateTripPlan } from '@/services/api'
 
 const router = useRouter()
 const tripStore = useTripStore()
+const authStore = useAuthStore()
 const tripPlan = ref<TripPlan | null>(null)
 const editMode = ref(false)
 const originalPlan = ref<TripPlan | null>(null)
@@ -367,7 +402,24 @@ const activeSection = ref('overview')
 // 默认展开第一天（索引0），accordion模式下应该是字符串或数字
 const activeDays = ref<string | number>(0) // 默认展开第一天
 const isLoading = ref(false)
+const isPlanSaved = ref(false)
 let map: any = null
+
+// 检查计划是否已保存
+const checkPlanSaved = () => {
+  if (!tripPlan.value || !authStore.isAuthenticated) {
+    isPlanSaved.value = false
+    return
+  }
+  // 检查 sessionStorage 中是否有待保存的计划
+  const pendingPlan = sessionStorage.getItem('pendingTripPlan')
+  if (pendingPlan) {
+    isPlanSaved.value = false
+  } else {
+    // 这里可以调用 API 检查计划是否已保存
+    isPlanSaved.value = false  // 暂时设为 false，实际应该调用 API 检查
+  }
+}
 
 // 监听 store 中的计划更新
 watch(() => tripStore.tripPlan, (newPlan) => {
@@ -419,7 +471,26 @@ onMounted(async () => {
         console.error('解析旅行计划失败:', e)
       }
     } else {
-      // 如果没有数据，显示加载状态
+      // 如果没有数据，但正在请求中，等待规划完成
+      if (tripStore.isRequesting) {
+        isLoading.value = true
+        // 监听规划完成
+        const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
+          if (newPlan) {
+            tripPlan.value = newPlan
+            sessionStorage.setItem('tripPlan', JSON.stringify(newPlan))
+            isLoading.value = false
+            stopWatcher()
+            nextTick(() => {
+              loadAttractionPhotos()
+              initMap()
+            })
+          }
+        }, { immediate: true })
+        return
+      }
+      
+      // 如果没有数据且不在请求中，显示加载状态
       isLoading.value = true
       // 等待一段时间后如果还没有数据，提示用户
       setTimeout(() => {
@@ -432,9 +503,39 @@ onMounted(async () => {
     }
   }
   
-  // 如果正在请求中，显示加载状态
+  // 如果正在请求中，显示加载状态并监听完成
   if (tripStore.isRequesting) {
     isLoading.value = true
+    // 监听规划完成
+    const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
+      if (newPlan && !tripPlan.value) {
+        tripPlan.value = newPlan
+        sessionStorage.setItem('tripPlan', JSON.stringify(newPlan))
+        isLoading.value = false
+        stopWatcher()
+        nextTick(() => {
+          loadAttractionPhotos()
+          initMap()
+        })
+      }
+    }, { immediate: true })
+  }
+  
+  // 检查计划是否已保存
+  checkPlanSaved()
+  
+  // 检查是否有待保存的计划（登录后自动保存）
+  if (authStore.isAuthenticated) {
+    const pendingPlan = sessionStorage.getItem('pendingTripPlan')
+    if (pendingPlan) {
+      try {
+        const plan = JSON.parse(pendingPlan)
+        // 自动保存计划
+        await handleSavePlan(plan)
+      } catch (e) {
+        console.error('解析待保存计划失败:', e)
+      }
+    }
   }
   
   // 加载景点图片
@@ -448,6 +549,47 @@ onMounted(async () => {
 
 const goBack = () => {
   router.push('/')
+}
+
+// 保存计划
+const handleSavePlan = async (planToSave?: TripPlan) => {
+  if (!authStore.isAuthenticated) {
+    // 未登录，跳转到登录页
+    router.push({ path: '/login', query: { redirect: '/result' } })
+    return
+  }
+  
+  const plan = planToSave || tripPlan.value
+  if (!plan) {
+    message.error('没有可保存的计划')
+    return
+  }
+  
+  try {
+    // 构建请求数据（从计划中提取）
+    const requestData: TripFormData = {
+      city: plan.city,
+      start_date: plan.start_date,
+      end_date: plan.end_date,
+      travel_days: plan.days.length,
+      transportation: plan.days[0]?.transportation || '公共交通',
+      accommodation: plan.days[0]?.accommodation || '经济型酒店',
+      preferences: [],
+      free_text_input: ''
+    }
+    
+    // 调用新的保存 API，直接保存现有计划
+    const { saveTripPlan } = await import('@/services/api')
+    await saveTripPlan(requestData, plan)
+    
+    // 清除待保存的计划
+    sessionStorage.removeItem('pendingTripPlan')
+    isPlanSaved.value = true
+    message.success('计划已保存到历史记录')
+  } catch (error: any) {
+    console.error('保存计划失败:', error)
+    message.error(error.message || '保存计划失败，请稍后重试')
+  }
 }
 
 // 智能体状态辅助函数
@@ -518,15 +660,31 @@ const saveChanges = () => {
   // 更新sessionStorage
   if (tripPlan.value) {
     sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
+    // 同时更新 store
+    tripStore.setTripPlan(tripPlan.value)
   }
   message.success('修改已保存')
 
   // 重新初始化地图以反映更改
+  // 先销毁现有地图
   if (map) {
-    map.destroy()
+    try {
+      map.destroy()
+    } catch (e) {
+      console.warn('销毁地图时出错:', e)
+    }
+    map = null
   }
+  
+  // 等待 DOM 更新和响应式数据更新
   nextTick(() => {
-    initMap()
+    // 再等待一小段时间确保地图容器已准备好
+    setTimeout(() => {
+      const mapContainer = document.getElementById('amap-container')
+      if (mapContainer && tripPlan.value) {
+        initMap()
+      }
+    }, 100)
   })
 }
 
@@ -565,6 +723,14 @@ const moveAttraction = (dayIndex: number, attrIndex: number, direction: 'up' | '
   } else if (direction === 'down' && attrIndex < attractions.length - 1) {
     [attractions[attrIndex], attractions[attrIndex + 1]] = [attractions[attrIndex + 1], attractions[attrIndex]]
   }
+}
+
+// 格式化建议文本，将数字编号后添加换行
+const formatSuggestions = (text: string): string => {
+  if (!text) return ''
+  // 将数字编号（如 1. 2. 3.）后添加换行
+  // 匹配模式：数字 + 点 + 空格（可选）
+  return text.replace(/(\d+\.)\s*/g, '\n$1 ')
 }
 
 const getMealLabel = (type: string): string => {
@@ -1340,6 +1506,24 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
 .weather-wind {
   margin-top: 8px;
   padding-top: 8px;
+}
+
+.weather-suggestion {
+  margin-top: 8px;
+}
+
+.suggestion-label {
+  font-weight: 600;
+  color: #333;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.suggestion-content {
+  font-size: 12px;
+  color: #666;
+  line-height: 1.6;
+  white-space: pre-wrap;
   border-top: 1px solid rgba(0, 121, 107, 0.2);
   text-align: center;
   color: #00796b;
@@ -1422,6 +1606,18 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
   font-size: 14px;
   font-weight: 600;
   color: #666;
+}
+
+.info-value {
+  font-size: 15px;
+  color: #333;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.suggestions-text {
+  white-space: pre-line;
+  line-height: 1.8;
 }
 
 .info-value {

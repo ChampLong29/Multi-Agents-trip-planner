@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ..config import get_settings, validate_config, print_config
-from .routes import trip, poi, map as map_routes
+from .routes import trip, poi, map as map_routes, auth, history
 
 # 获取配置
 settings = get_settings()
@@ -30,6 +30,8 @@ app.add_middleware(
 app.include_router(trip.router, prefix="/api")
 app.include_router(poi.router, prefix="/api")
 app.include_router(map_routes.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
+app.include_router(history.router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -38,6 +40,10 @@ async def startup_event():
     print("\n" + "="*60)
     print(f"🚀 {settings.app_name} v{settings.app_version}")
     print("="*60)
+    
+    # 初始化数据库
+    from ..models.database import init_db
+    init_db()
     
     # 打印配置信息
     print_config()
@@ -89,11 +95,36 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+    from pathlib import Path
+    
+    # 获取项目根目录
+    backend_dir = Path(__file__).parent.parent.parent.absolute()
+    app_dir = backend_dir / "app"
+    venv_dir = backend_dir / ".venv"
+    data_dir = backend_dir / "data"
+    
+    reload_dirs = [str(app_dir)]
+    reload_includes = ["*.py"]
+    
+    reload_excludes = [
+        "**/*.pyc", "**/*.pyo", "**/*.pyd", 
+        "**/__pycache__/**", "**/*.so", 
+        "**/.venv/**", "**/venv/**", ".venv/**", "venv/**", str(venv_dir) + "/**",
+        "**/.git/**", ".git/**", "**/*.log",
+        "**/*.py~", "**/*.swp",
+        "**/*.db", "**/*.sqlite", "**/*.sqlite3",
+        "**/data/**", "data/**", str(data_dir) + "/**",
+        "**/*.db-journal", "**/*.db-wal", "**/*.db-shm",
+        "**/uv.lock", "uv.lock", "**/*.lock"
+    ]
     
     uvicorn.run(
         "app.api.main:app",
         host=settings.host,
         port=settings.port,
-        reload=True
+        reload=True,
+        reload_dirs=reload_dirs,
+        reload_includes=reload_includes,
+        reload_excludes=reload_excludes
     )
 

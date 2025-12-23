@@ -49,3 +49,16 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+
+# 锁文件
+*.lock
+uv.lock
+

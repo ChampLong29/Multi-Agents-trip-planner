@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     task_timeout: int = 120  # 任务超时时间(秒)
     max_retries: int = 3  # 最大重试次数
     retry_delay: int = 1  # 重试延迟(秒)
+    
+    # JWT配置
+    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24 * 7  # 7天
 
     class Config:
         env_file = ".env"

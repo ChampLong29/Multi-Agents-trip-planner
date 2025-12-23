@@ -25,3 +25,14 @@ loguru>=0.7.0
 
 # 其他工具
 python-dateutil>=2.8.2
+
+# 数据库
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+
+# 认证和加密
+bcrypt>=4.0.0
+python-jose[cryptography]>=3.3.0
+
+# LangChain记忆
+langchain>=0.1.0

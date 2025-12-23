@@ -16,6 +16,38 @@
       <p class="page-subtitle">基于AI的个性化旅行规划,让每一次出行都完美无忧</p>
     </div>
 
+    <!-- 历史记录预览（仅登录用户显示） -->
+    <a-card v-if="authStore.isAuthenticated && recentTrips.length > 0" class="history-preview-card" :bordered="false">
+      <template #title>
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <span>📋 最近的历史记录</span>
+          <a-button type="link" @click="$router.push('/history')">查看全部 →</a-button>
+        </div>
+      </template>
+      <a-list :data-source="recentTrips" :loading="loadingHistory">
+        <template #renderItem="{ item }">
+          <a-list-item>
+            <a-list-item-meta>
+              <template #title>
+                <a @click="viewHistoryTrip(item)">{{ item.city }}</a>
+              </template>
+              <template #description>
+                <div>
+                  <div>{{ item.start_date }} 至 {{ item.end_date }}</div>
+                  <div style="color: #999; font-size: 12px; margin-top: 4px">
+                    {{ formatDate(item.created_at) }}
+                  </div>
+                </div>
+              </template>
+            </a-list-item-meta>
+            <template #actions>
+              <a @click="viewHistoryTrip(item)">查看详情</a>
+            </template>
+          </a-list-item>
+        </template>
+      </a-list>
+    </a-card>
+
     <a-card class="form-card" :bordered="false">
       <a-form
         :model="formData"
@@ -248,11 +280,13 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, watch, computed, onUnmounted } from 'vue'
+import { reactive, watch, computed, onUnmounted, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { generateTripPlanStream, cancelCurrentRequest } from '@/services/api'
+import apiClient from '@/services/api'
 import { useTripStore } from '@/stores/tripStore'
+import { useAuthStore } from '@/stores/authStore'
 import AgentStatus from '@/components/AgentStatus.vue'
 import StreamingContent from '@/components/StreamingContent.vue'
 import type { TripFormData } from '@/types'
@@ -260,6 +294,9 @@ import type { Dayjs } from 'dayjs'
 
 const router = useRouter()
 const tripStore = useTripStore()
+const authStore = useAuthStore()
+const recentTrips = ref<any[]>([])
+const loadingHistory = ref(false)
 
 const formData = reactive<TripFormData & { start_date: Dayjs | null; end_date: Dayjs | null }>({
   city: '',
@@ -295,13 +332,102 @@ watch([() => formData.start_date, () => formData.end_date], ([start, end]: [any,
   }
 })
 
-// 清理函数
-onUnmounted(() => {
-  if (tripStore.isRequesting) {
-    cancelCurrentRequest()
-    tripStore.finishRequest()
+// 加载历史记录
+const loadHistory = async () => {
+  if (!authStore.isAuthenticated) {
+    return
+  }
+  
+  loadingHistory.value = true
+  try {
+    const response = await apiClient.get('/api/history/trips', {
+      params: { limit: 5 }
+    })
+    if (response.data.success && response.data.data) {
+      recentTrips.value = response.data.data
+    }
+  } catch (error) {
+    console.error('加载历史记录失败:', error)
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+// 格式化日期
+const formatDate = (dateStr: string) => {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })
+}
+
+// 查看历史记录
+const viewHistoryTrip = (item: any) => {
+  // 跳转到结果页，并加载该计划
+  router.push(`/result?trip_id=${item.id}`)
+}
+
+// 监听登录状态变化
+watch(() => authStore.isAuthenticated, (isAuth) => {
+  if (isAuth) {
+    loadHistory()
+  } else {
+    recentTrips.value = []
   }
 })
+
+// 组件挂载时加载历史记录和恢复表单数据
+onMounted(async () => {
+  if (authStore.isAuthenticated) {
+    loadHistory()
+  }
+  
+  // 恢复保存的表单数据
+  const savedFormData = tripStore.getFormData()
+  if (savedFormData) {
+    // 恢复基本字段
+    formData.city = savedFormData.city
+    formData.travel_days = savedFormData.travel_days
+    formData.transportation = savedFormData.transportation
+    formData.accommodation = savedFormData.accommodation
+    formData.preferences = savedFormData.preferences || []
+    formData.free_text_input = savedFormData.free_text_input || ''
+    
+    // 恢复日期（需要从字符串转换为 Dayjs 对象）
+    if (savedFormData.start_date) {
+      const dayjs = (await import('dayjs')).default
+      formData.start_date = dayjs(savedFormData.start_date)
+    }
+    if (savedFormData.end_date) {
+      const dayjs = (await import('dayjs')).default
+      formData.end_date = dayjs(savedFormData.end_date)
+    }
+  }
+  
+  // 如果正在请求中，监听规划完成事件
+  if (tripStore.isRequesting) {
+    const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
+      if (newPlan) {
+        // 规划完成，跳转到结果页
+        message.success('旅行计划生成成功!')
+        stopWatcher() // 停止监听
+        setTimeout(() => {
+          router.push('/result')
+        }, 500)
+      }
+    }, { immediate: true })
+  }
+  
+  // 如果已经有规划结果，检查是否需要跳转
+  if (tripStore.tripPlan && !tripStore.isRequesting) {
+    // 已经有规划结果，可能用户从其他页面返回，不需要自动跳转
+  }
+})
+
+// 不再在组件卸载时取消请求，让请求继续在后台进行
+// 这样用户可以在其他页面查看，请求完成后会自动跳转到结果页
 
 const handleSubmit = async () => {
   // 防重复提交检查
@@ -335,6 +461,9 @@ const handleSubmit = async () => {
       preferences: formData.preferences,
       free_text_input: formData.free_text_input
     }
+    
+    // 保存表单数据到 store 和 sessionStorage
+    tripStore.saveFormData(requestData)
 
     // 使用流式请求
     const response = await generateTripPlanStream(
@@ -348,13 +477,38 @@ const handleSubmit = async () => {
       // 保存到store和sessionStorage
       tripStore.setTripPlan(response.data)
       sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
-
-      message.success('旅行计划生成成功!')
-
-      // 短暂延迟后跳转
-      setTimeout(() => {
-        router.push('/result')
-      }, 500)
+      
+      // 如果未登录且需要登录保存，显示登录提示
+      const authStore = useAuthStore()
+      if (response.requires_login && !authStore.isAuthenticated) {
+        // 保存计划到 sessionStorage，以便登录后保存
+        sessionStorage.setItem('pendingTripPlan', JSON.stringify(response.data))
+        
+        message.warning('计划已生成，登录后可保存到历史记录', 5)
+        
+        // 显示登录提示弹窗
+        Modal.confirm({
+          title: '登录保存计划',
+          content: '您还未登录，登录后可以保存此计划到历史记录，方便以后查看。',
+          okText: '立即登录',
+          cancelText: '稍后登录',
+          onOk: () => {
+            router.push({ path: '/login', query: { redirect: '/result' } })
+          },
+          onCancel: () => {
+            // 用户选择稍后登录，直接跳转到结果页
+            setTimeout(() => {
+              router.push('/result')
+            }, 500)
+          }
+        })
+      } else {
+        message.success('旅行计划生成成功!')
+        // 短暂延迟后跳转
+        setTimeout(() => {
+          router.push('/result')
+        }, 500)
+      }
     } else {
       tripStore.setError(response.message || '生成失败')
       message.error(response.message || '生成失败')
@@ -482,6 +636,19 @@ const handleCancel = () => {
   color: rgba(255, 255, 255, 0.95);
   margin: 0;
   font-weight: 300;
+}
+
+/* 历史记录预览卡片 */
+.history-preview-card {
+  max-width: 1400px;
+  margin: 0 auto 30px;
+  border-radius: 24px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+  animation: fadeInUp 0.8s ease-out;
+  position: relative;
+  z-index: 1;
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.98) !important;
 }
 
 /* 表单卡片 */

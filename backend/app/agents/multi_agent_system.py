@@ -24,6 +24,7 @@ class TripPlanningState(TypedDict):
     errors: List[str]
     progress: Dict[str, Any]  # 进度信息
     messages: List[Any]  # 消息历史
+    memory_context: Optional[str]  # 用户记忆上下文
 
 
 class MultiAgentTripPlanner:
@@ -154,14 +155,39 @@ class MultiAgentTripPlanner:
                         break
                 
                 if weather_data:
+                    # 生成穿着建议和活动建议
+                    day_weather = weather_data.get("dayweather", "")
+                    day_temp = weather_data.get("daytemp", 0)
+                    night_temp = weather_data.get("nighttemp", 0)
+                    
+                    # 解析温度（可能是字符串）
+                    try:
+                        if isinstance(day_temp, str):
+                            day_temp = int(day_temp.replace("°C", "").replace("℃", "").strip())
+                        if isinstance(night_temp, str):
+                            night_temp = int(night_temp.replace("°C", "").replace("℃", "").strip())
+                    except:
+                        day_temp = 20
+                        night_temp = 15
+                    
+                    avg_temp = (day_temp + night_temp) / 2
+                    
+                    # 生成穿着建议
+                    clothing_suggestion = self._generate_clothing_suggestion(day_weather, avg_temp, day_temp, night_temp)
+                    
+                    # 生成活动建议
+                    activity_suggestion = self._generate_activity_suggestion(day_weather, avg_temp)
+                    
                     weather_info = WeatherInfo(
                         date=date_str,
-                        day_weather=weather_data.get("dayweather", ""),
+                        day_weather=day_weather,
                         night_weather=weather_data.get("nightweather", ""),
-                        day_temp=weather_data.get("daytemp", 0),
-                        night_temp=weather_data.get("nighttemp", 0),
+                        day_temp=day_temp,
+                        night_temp=night_temp,
                         wind_direction=weather_data.get("daywind", ""),
-                        wind_power=weather_data.get("daypower", "")
+                        wind_power=weather_data.get("daypower", ""),
+                        clothing_suggestion=clothing_suggestion,
+                        activity_suggestion=activity_suggestion
                     )
                     weather_list.append(weather_info)
             
@@ -178,6 +204,103 @@ class MultiAgentTripPlanner:
             state["progress"]["weather"]["status"] = "failed"
         
         return state
+    
+    def _generate_clothing_suggestion(self, weather: str, avg_temp: float, day_temp: float, night_temp: float) -> str:
+        """根据天气生成穿着建议"""
+        suggestions = []
+        
+        # 根据温度建议
+        if avg_temp >= 30:
+            suggestions.append("建议穿着轻薄透气的短袖、短裤或短裙")
+            suggestions.append("必备遮阳帽、太阳镜和防晒霜")
+            suggestions.append("选择浅色、宽松的衣物")
+        elif avg_temp >= 25:
+            suggestions.append("建议穿着短袖T恤、薄长裤或短裤")
+            suggestions.append("可携带薄外套或防晒衣")
+        elif avg_temp >= 20:
+            suggestions.append("建议穿着长袖T恤或薄衬衫")
+            suggestions.append("可携带薄外套或风衣")
+        elif avg_temp >= 15:
+            suggestions.append("建议穿着长袖衬衫或薄毛衣")
+            suggestions.append("建议携带外套或夹克")
+        elif avg_temp >= 10:
+            suggestions.append("建议穿着毛衣或薄羽绒服")
+            suggestions.append("建议穿着长裤，可携带围巾")
+        elif avg_temp >= 5:
+            suggestions.append("建议穿着厚毛衣或薄羽绒服")
+            suggestions.append("建议穿着厚外套，注意保暖")
+        else:
+            suggestions.append("建议穿着厚羽绒服或大衣")
+            suggestions.append("建议穿着保暖内衣，注意防寒")
+        
+        # 根据天气状况建议
+        weather_lower = weather.lower()
+        if "雨" in weather_lower or "雨" in weather:
+            suggestions.append("⚠️ 必须携带雨具（雨伞或雨衣）")
+            suggestions.append("建议穿着防滑鞋，避免湿滑路面")
+            suggestions.append("可携带防水包或塑料袋保护电子设备")
+        elif "雪" in weather_lower or "雪" in weather:
+            suggestions.append("⚠️ 必须穿着防滑鞋或雪地靴")
+            suggestions.append("建议穿着防水外套")
+            suggestions.append("建议携带手套和帽子")
+        elif "风" in weather_lower or "风" in weather or int(avg_temp) < 15:
+            suggestions.append("建议穿着防风外套")
+            suggestions.append("可携带围巾或口罩防风")
+        elif "晴" in weather_lower or "晴" in weather or "多云" in weather_lower:
+            if avg_temp >= 20:
+                suggestions.append("适合户外活动，注意防晒")
+        
+        # 温差建议
+        temp_diff = abs(day_temp - night_temp)
+        if temp_diff > 8:
+            suggestions.append("⚠️ 昼夜温差较大，建议采用分层穿着，方便增减衣物")
+        
+        return "；".join(suggestions) if suggestions else "根据天气情况选择合适的衣物"
+    
+    def _generate_activity_suggestion(self, weather: str, avg_temp: float) -> str:
+        """根据天气生成活动建议"""
+        suggestions = []
+        
+        weather_lower = weather.lower()
+        
+        # 雨天建议
+        if "雨" in weather_lower or "雨" in weather:
+            suggestions.append("⚠️ 不适合户外游玩，建议选择室内景点（博物馆、美术馆、购物中心、室内娱乐场所等）")
+            suggestions.append("⚠️ 不适合步行游览，建议使用公共交通或打车")
+            suggestions.append("建议安排室内活动，如参观展览、看电影、购物等")
+            suggestions.append("如必须外出，请携带雨具并注意安全")
+        # 雪天建议
+        elif "雪" in weather_lower or "雪" in weather:
+            suggestions.append("⚠️ 不适合户外长时间活动，建议选择室内景点")
+            suggestions.append("⚠️ 不适合步行，建议使用公共交通或打车")
+            suggestions.append("如要户外活动，请穿着防滑鞋，注意安全")
+        # 高温建议
+        elif avg_temp >= 30:
+            suggestions.append("⚠️ 高温天气，建议避免正午时段户外活动（11:00-15:00）")
+            suggestions.append("建议选择有遮阴的景点或室内景点")
+            suggestions.append("建议多安排室内活动，注意防暑降温")
+            suggestions.append("适合早出晚归，避开高温时段")
+        # 低温建议
+        elif avg_temp <= 5:
+            suggestions.append("⚠️ 低温天气，建议减少户外活动时间")
+            suggestions.append("建议选择室内景点或短时间户外活动")
+            suggestions.append("注意保暖，避免长时间在户外停留")
+        # 大风建议
+        elif "风" in weather_lower or "风" in weather:
+            suggestions.append("⚠️ 大风天气，不适合户外长时间活动")
+            suggestions.append("建议选择室内景点或避风场所")
+            suggestions.append("如要户外活动，请注意安全，避免高空或危险区域")
+        # 良好天气建议
+        else:
+            if avg_temp >= 20 and avg_temp < 30:
+                suggestions.append("✅ 天气良好，适合户外游玩")
+                suggestions.append("✅ 适合步行游览，可安排较多户外景点")
+                suggestions.append("建议安排公园、景区等户外活动")
+            elif avg_temp >= 15:
+                suggestions.append("✅ 天气适宜，适合户外活动")
+                suggestions.append("✅ 适合步行，可安排户外景点")
+        
+        return "；".join(suggestions) if suggestions else "根据天气情况合理安排活动"
     
     async def _search_hotels_node(self, state: TripPlanningState) -> TripPlanningState:
         """酒店搜索节点"""
@@ -256,11 +379,13 @@ class MultiAgentTripPlanner:
             # 但我们需要确保数据已准备好
             
             # 构建规划提示词
+            memory_context = state.get("memory_context") or ""
             planner_prompt = self._build_planner_prompt(
                 request, 
                 state["attractions"], 
                 state["weather"], 
-                state["hotels"]
+                state["hotels"],
+                memory_context
             )
             
             # 调用 LLM 生成计划
@@ -298,7 +423,8 @@ class MultiAgentTripPlanner:
         request: TripRequest, 
         attractions: List[POIInfo], 
         weather: List[WeatherInfo], 
-        hotels: List[Dict[str, Any]]
+        hotels: List[Dict[str, Any]],
+        memory_context: str = ""
     ) -> str:
         """构建规划提示词"""
         attractions_text = "\n".join([
@@ -307,7 +433,9 @@ class MultiAgentTripPlanner:
         ])
         
         weather_text = "\n".join([
-            f"- {w.date}: 白天{w.day_weather} {w.day_temp}°C, 夜间{w.night_weather} {w.night_temp}°C"
+            f"- {w.date}: 白天{w.day_weather} {w.day_temp}°C, 夜间{w.night_weather} {w.night_temp}°C\n"
+            f"  穿着建议: {w.clothing_suggestion}\n"
+            f"  活动建议: {w.activity_suggestion}"
             for w in weather
         ])
         
@@ -326,7 +454,12 @@ class MultiAgentTripPlanner:
 - 住宿: {request.accommodation}
 - 偏好: {', '.join(request.preferences) if request.preferences else '无'}
 
-**可用景点:**
+"""
+        # 添加用户记忆上下文
+        if memory_context:
+            prompt += f"**用户历史偏好和对话记忆:**\n{memory_context}\n\n"
+        
+        prompt += f"""**可用景点:**
 {attractions_text}
 
 **天气信息:**
@@ -335,13 +468,21 @@ class MultiAgentTripPlanner:
 **可用酒店:**
 {hotels_text}
 
-**要求:**
-1. 每天安排2-3个景点
-2. 每天必须包含早中晚三餐
-3. 每天推荐一个具体的酒店(从可用酒店中选择)
-4. 考虑景点之间的距离和交通方式
-5. 返回完整的JSON格式数据
-6. 景点的经纬度坐标要真实准确
+**重要要求（必须严格遵守）:**
+1. **根据天气调整行程安排**:
+   - 如果某天是雨天、雪天或恶劣天气，必须优先安排室内景点（博物馆、美术馆、购物中心、室内娱乐场所等），避免安排户外景点
+   - 如果某天是雨天或雪天，必须调整交通方式，避免步行，建议使用公共交通或打车
+   - 如果某天是高温天气（≥30°C），避免在正午时段（11:00-15:00）安排户外活动
+   - 如果某天是低温天气（≤5°C），减少户外活动时间，多安排室内景点
+   - 如果某天是大风天气，避免安排高空或危险区域的户外活动
+   - 在每天的行程描述中，必须说明为什么这样安排（考虑天气因素）
+
+2. 每天安排2-3个景点（根据天气情况灵活调整）
+3. 每天必须包含早中晚三餐
+4. 每天推荐一个具体的酒店(从可用酒店中选择)
+5. 考虑景点之间的距离和交通方式（雨天/雪天避免步行）
+6. 返回完整的JSON格式数据
+7. 景点的经纬度坐标要真实准确
 
 请严格按照以下JSON格式返回:
 {{
@@ -419,18 +560,109 @@ class MultiAgentTripPlanner:
             else:
                 raise ValueError("响应中未找到JSON数据")
             
-            # 解析JSON
-            data = json.loads(json_str)
+            # 先尝试直接解析，如果失败再修复
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError:
+                # 只有在解析失败时才尝试修复
+                print(f"⚠️  首次JSON解析失败，尝试修复...")
+                json_str = self._fix_json_string(json_str)
+                data = json.loads(json_str)
+            
+            # 确保 day_index 从 0 开始
+            if "days" in data and isinstance(data["days"], list):
+                for i, day in enumerate(data["days"]):
+                    if isinstance(day, dict):
+                        day["day_index"] = i
             
             # 转换为TripPlan对象
             trip_plan = TripPlan(**data)
             
             return trip_plan
             
+        except json.JSONDecodeError as e:
+            print(f"⚠️  JSON解析失败: {str(e)}")
+            print(f"   错误位置: line {e.lineno}, column {e.colno}")
+            print(f"   尝试修复JSON...")
+            try:
+                # 尝试修复并重新解析
+                fixed_json = self._fix_json_string(response[json_start:json_end] if 'json_str' in locals() else response)
+                data = json.loads(fixed_json)
+                if "days" in data and isinstance(data["days"], list):
+                    for i, day in enumerate(data["days"]):
+                        if isinstance(day, dict):
+                            day["day_index"] = i
+                trip_plan = TripPlan(**data)
+                print(f"   ✅ JSON修复成功")
+                return trip_plan
+            except Exception as e2:
+                print(f"   ❌ JSON修复失败: {str(e2)}")
+                print(f"   将使用备用方案生成计划")
+                return self._create_fallback_plan(request)
         except Exception as e:
             print(f"⚠️  解析响应失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
             print(f"   将使用备用方案生成计划")
             return self._create_fallback_plan(request)
+    
+    def _fix_json_string(self, json_str: str) -> str:
+        """尝试修复常见的 JSON 格式问题（保守策略）"""
+        import re
+        
+        fixed_json = json_str
+        
+        # 1. 移除 JSON 中的注释（如果 LLM 添加了注释）
+        # 只在字符串外移除注释
+        fixed_json = re.sub(r'//.*?$', '', fixed_json, flags=re.MULTILINE)
+        fixed_json = re.sub(r'/\*.*?\*/', '', fixed_json, flags=re.DOTALL)
+        
+        # 2. 修复末尾的逗号（在对象和数组末尾）
+        fixed_json = re.sub(r',(\s*[}\]])', r'\1', fixed_json)
+        
+        # 3. 尝试修复未终止的字符串（保守策略）
+        # 只在确实有问题时才修复
+        try:
+            # 先测试是否能解析
+            json.loads(fixed_json)
+            return fixed_json
+        except json.JSONDecodeError as e:
+            # 如果是字符串相关的错误，尝试修复
+            if 'Unterminated string' in str(e) or 'Expecting' in str(e):
+                # 尝试在错误位置附近修复
+                lines = fixed_json.split('\n')
+                if e.lineno <= len(lines):
+                    error_line = lines[e.lineno - 1]
+                    # 如果行尾有未闭合的引号，尝试闭合
+                    if error_line.count('"') % 2 == 1:
+                        # 检查是否在字符串中
+                        quote_count = 0
+                        escape = False
+                        for char in error_line:
+                            if escape:
+                                escape = False
+                                continue
+                            if char == '\\':
+                                escape = True
+                                continue
+                            if char == '"':
+                                quote_count += 1
+                        
+                        # 如果引号数为奇数，可能是未闭合
+                        if quote_count % 2 == 1:
+                            # 在行尾添加闭合引号（如果还没有）
+                            if not error_line.rstrip().endswith('"'):
+                                lines[e.lineno - 1] = error_line.rstrip() + '"'
+                                fixed_json = '\n'.join(lines)
+                
+                # 再次尝试解析
+                try:
+                    json.loads(fixed_json)
+                    return fixed_json
+                except:
+                    pass
+        
+        return fixed_json
     
     def _create_fallback_plan(self, request: TripRequest) -> TripPlan:
         """创建备用计划"""
@@ -474,8 +706,24 @@ class MultiAgentTripPlanner:
             overall_suggestions=f"这是为您规划的{request.city}{request.travel_days}日游行程,建议提前查看各景点的开放时间。"
         )
     
-    async def plan_trip(self, request: TripRequest) -> TripPlan:
+    async def plan_trip(self, request: TripRequest, user_id: Optional[int] = None, session_id: Optional[str] = None) -> TripPlan:
         """生成旅行计划"""
+        # 加载用户记忆上下文（如果提供了user_id）
+        memory_context = ""
+        if user_id:
+            from sqlalchemy.orm import Session
+            from ..models.database import SessionLocal
+            from ..services.memory_service import build_memory_context
+            
+            # 获取数据库会话
+            db = SessionLocal()
+            try:
+                memory_context = build_memory_context(db, user_id, request)
+                if memory_context:
+                    print(f"📝 加载用户记忆上下文...")
+            finally:
+                db.close()
+        
         print(f"\n{'='*60}")
         print(f"🚀 开始多智能体协作规划旅行...")
         print(f"目的地: {request.city}")
@@ -497,7 +745,8 @@ class MultiAgentTripPlanner:
                 "hotels": {"status": "pending", "progress": 0},
                 "planning": {"status": "pending", "progress": 0}
             },
-            "messages": []
+            "messages": [],
+            "memory_context": memory_context
         }
         
         # 并行执行三个搜索任务
@@ -523,7 +772,9 @@ class MultiAgentTripPlanner:
     
     async def plan_trip_stream(
         self, 
-        request: TripRequest
+        request: TripRequest,
+        user_id: Optional[int] = None,
+        session_id: Optional[str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """流式生成旅行计划"""
         # 发送开始事件
@@ -532,6 +783,25 @@ class MultiAgentTripPlanner:
             "message": "开始生成旅行计划",
             "progress": 0
         }
+        
+        # 加载用户记忆上下文（如果提供了user_id）
+        memory_context = ""
+        if user_id:
+            from sqlalchemy.orm import Session
+            from ..models.database import SessionLocal
+            from ..services.memory_service import build_memory_context
+            
+            # 获取数据库会话
+            db = SessionLocal()
+            try:
+                memory_context = build_memory_context(db, user_id, request)
+                if memory_context:
+                    yield {
+                        "type": "info",
+                        "message": "已加载用户历史偏好"
+                    }
+            finally:
+                db.close()
         
         # 初始化状态
         state: TripPlanningState = {
@@ -547,99 +817,151 @@ class MultiAgentTripPlanner:
                 "hotels": {"status": "pending", "progress": 0},
                 "planning": {"status": "pending", "progress": 0}
             },
-            "messages": []
+            "messages": [],
+            "memory_context": memory_context
         }
         
         # 创建带进度回调的节点函数（包装为协程，收集事件）
         async def search_attractions_with_progress():
             events = []
-            state["progress"]["attractions"]["status"] = "running"
-            state["progress"]["attractions"]["progress"] = 10
-            events.append({
-                "type": "progress",
-                "agent": "attractions",
-                "status": "running",
-                "progress": 10,
-                "message": "正在搜索景点..."
-            })
-            
-            await self._search_attractions_node(state)
-            
-            events.append({
-                "type": "progress",
-                "agent": "attractions",
-                "status": state["progress"]["attractions"]["status"],
-                "progress": state["progress"]["attractions"]["progress"],
-                "message": "景点搜索完成"
-            })
-            
-            if state["attractions"]:
+            try:
+                state["progress"]["attractions"]["status"] = "running"
+                state["progress"]["attractions"]["progress"] = 10
                 events.append({
-                    "type": "data",
+                    "type": "progress",
                     "agent": "attractions",
-                    "data": [attr.dict() for attr in state["attractions"][:5]]
+                    "status": "running",
+                    "progress": 10,
+                    "message": "正在搜索景点..."
+                })
+                
+                await self._search_attractions_node(state)
+                
+                # 确保状态正确更新
+                final_status = state["progress"]["attractions"]["status"]
+                final_progress = state["progress"]["attractions"]["progress"]
+                
+                events.append({
+                    "type": "progress",
+                    "agent": "attractions",
+                    "status": final_status,
+                    "progress": final_progress,
+                    "message": "景点搜索完成" if final_status == "completed" else "景点搜索失败"
+                })
+                
+                if state["attractions"]:
+                    events.append({
+                        "type": "data",
+                        "agent": "attractions",
+                        "data": [attr.dict() for attr in state["attractions"][:5]]
+                    })
+            except Exception as e:
+                error_msg = f"景点搜索异常: {str(e)}"
+                print(f"❌ {error_msg}")
+                state["progress"]["attractions"]["status"] = "failed"
+                state["progress"]["attractions"]["progress"] = 0
+                events.append({
+                    "type": "progress",
+                    "agent": "attractions",
+                    "status": "failed",
+                    "progress": 0,
+                    "message": error_msg
                 })
             
             return events
         
         async def search_weather_with_progress():
             events = []
-            state["progress"]["weather"]["status"] = "running"
-            state["progress"]["weather"]["progress"] = 10
-            events.append({
-                "type": "progress",
-                "agent": "weather",
-                "status": "running",
-                "progress": 10,
-                "message": "正在查询天气..."
-            })
-            
-            await self._search_weather_node(state)
-            
-            events.append({
-                "type": "progress",
-                "agent": "weather",
-                "status": state["progress"]["weather"]["status"],
-                "progress": state["progress"]["weather"]["progress"],
-                "message": "天气查询完成"
-            })
-            
-            if state["weather"]:
+            try:
+                state["progress"]["weather"]["status"] = "running"
+                state["progress"]["weather"]["progress"] = 10
                 events.append({
-                    "type": "data",
+                    "type": "progress",
                     "agent": "weather",
-                    "data": [w.dict() for w in state["weather"]]
+                    "status": "running",
+                    "progress": 10,
+                    "message": "正在查询天气..."
+                })
+                
+                await self._search_weather_node(state)
+                
+                # 确保状态正确更新
+                final_status = state["progress"]["weather"]["status"]
+                final_progress = state["progress"]["weather"]["progress"]
+                
+                events.append({
+                    "type": "progress",
+                    "agent": "weather",
+                    "status": final_status,
+                    "progress": final_progress,
+                    "message": "天气查询完成" if final_status == "completed" else "天气查询失败"
+                })
+                
+                if state["weather"]:
+                    events.append({
+                        "type": "data",
+                        "agent": "weather",
+                        "data": [w.dict() for w in state["weather"]]
+                    })
+            except Exception as e:
+                error_msg = f"天气查询异常: {str(e)}"
+                print(f"❌ {error_msg}")
+                state["progress"]["weather"]["status"] = "failed"
+                state["progress"]["weather"]["progress"] = 0
+                events.append({
+                    "type": "progress",
+                    "agent": "weather",
+                    "status": "failed",
+                    "progress": 0,
+                    "message": error_msg
                 })
             
             return events
         
         async def search_hotels_with_progress():
             events = []
-            state["progress"]["hotels"]["status"] = "running"
-            state["progress"]["hotels"]["progress"] = 10
-            events.append({
-                "type": "progress",
-                "agent": "hotels",
-                "status": "running",
-                "progress": 10,
-                "message": "正在搜索酒店..."
-            })
-            
-            await self._search_hotels_node(state)
-            
-            events.append({
-                "type": "progress",
-                "agent": "hotels",
-                "status": state["progress"]["hotels"]["status"],
-                "progress": state["progress"]["hotels"]["progress"],
-                "message": "酒店搜索完成"
-            })
-            
-            if state["hotels"]:
+            try:
+                state["progress"]["hotels"]["status"] = "running"
+                state["progress"]["hotels"]["progress"] = 10
                 events.append({
-                    "type": "data",
+                    "type": "progress",
                     "agent": "hotels",
-                    "data": state["hotels"][:5]
+                    "status": "running",
+                    "progress": 10,
+                    "message": "正在搜索酒店..."
+                })
+                
+                await self._search_hotels_node(state)
+                
+                # 确保状态正确更新
+                final_status = state["progress"]["hotels"]["status"]
+                final_progress = state["progress"]["hotels"]["progress"]
+                
+                events.append({
+                    "type": "progress",
+                    "agent": "hotels",
+                    "status": final_status,
+                    "progress": final_progress,
+                    "message": "酒店搜索完成" if final_status == "completed" else "酒店搜索失败"
+                })
+                
+                if state["hotels"]:
+                    events.append({
+                        "type": "data",
+                        "agent": "hotels",
+                        "data": state["hotels"][:5]
+                    })
+            except Exception as e:
+                error_msg = f"酒店搜索异常: {str(e)}"
+                print(f"❌ {error_msg}")
+                state["progress"]["hotels"]["status"] = "failed"
+                state["progress"]["hotels"]["progress"] = 0
+                events.append({
+                    "type": "progress",
+                    "agent": "hotels",
+                    "status": "failed",
+                    "progress": 0,
+                    "message": error_msg
                 })
             
             return events
@@ -663,8 +985,9 @@ class MultiAgentTripPlanner:
                 }
                 continue
             # result 现在是一个事件列表
-            for event in result:
-                yield event
+            if isinstance(result, list):
+                for event in result:
+                    yield event
         
         # 生成最终计划
         state["progress"]["planning"]["status"] = "running"
@@ -680,9 +1003,10 @@ class MultiAgentTripPlanner:
         state = await self._plan_trip_node(state)
         
         if state.get("plan"):
+            plan = state["plan"]
             yield {
                 "type": "complete",
-                "plan": state["plan"].dict(),
+                "plan": plan.dict() if hasattr(plan, "dict") else plan,
                 "message": "旅行计划生成完成"
             }
         else:

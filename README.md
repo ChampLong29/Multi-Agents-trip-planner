@@ -33,6 +33,10 @@
 - 🗺️ **高德地图集成**：深度集成高德地图 API，提供 POI 搜索、路线规划、天气查询
 - 🎨 **现代化前端**：Vue 3 + TypeScript + Pinia，响应式设计，实时进度显示
 - ⚡ **高性能**：并行执行减少等待时间，流式响应提升用户体验
+- 👤 **用户认证系统**：支持用户注册、登录，JWT token 身份验证
+- 🧠 **智能记忆功能**：集成 LangChain 记忆系统，记住用户偏好和历史对话
+- 💾 **数据持久化**：SQLite 数据库存储用户数据、旅行历史和对话记录
+- 📋 **历史记录管理**：查看和管理历史旅行计划和对话记录
 
 ---
 
@@ -57,6 +61,8 @@
    - 查询旅行期间的天气预报
    - 支持多日天气查询
    - 返回温度、天气状况、风力等信息
+   - 自动生成穿着建议和活动建议
+   - 根据天气影响行程规划（雨天优先室内、避免步行等）
 
 3. **酒店推荐智能体 (Hotel Agent)**
    - 根据住宿偏好推荐酒店
@@ -87,23 +93,59 @@
 - `amap_service.py` - 高德地图 API 封装
 - `unsplash_service.py` - 图片服务（可选）
 
-#### 1.4 API 路由 (`backend/app/api/routes/`)
+#### 1.4 数据模型 (`backend/app/models/`)
+
+**文件结构：**
+- `schemas.py` - Pydantic 数据模型
+- `database.py` - SQLAlchemy 数据库模型
+
+**数据库模型：**
+- `User` - 用户表（用户名、邮箱、密码哈希）
+- `ConversationHistory` - 对话历史表
+- `TripHistory` - 旅行历史表
+- `UserPreferences` - 用户偏好表
+
+#### 1.5 认证和记忆服务 (`backend/app/services/`)
+
+**文件结构：**
+- `auth_service.py` - 认证服务（密码加密、JWT生成和验证）
+- `memory_service.py` - 记忆服务（保存/加载对话历史、用户偏好）
+
+**功能：**
+- 用户密码加密（bcrypt）
+- JWT token 生成和验证
+- 用户偏好自动提取和更新
+- 对话历史管理
+- LangChain 记忆集成
+
+#### 1.6 API 路由 (`backend/app/api/routes/`)
 
 **文件结构：**
 - `trip.py` - 旅行规划相关 API
 - `map.py` - 地图相关 API
 - `poi.py` - POI 相关 API
+- `auth.py` - 认证相关 API
+- `history.py` - 历史记录相关 API
 
 **主要端点：**
 - `POST /api/trip/plan` - 同步生成旅行计划
 - `POST /api/trip/plan/stream` - 流式生成旅行计划（SSE）
+- `POST /api/auth/register` - 用户注册
+- `POST /api/auth/login` - 用户登录
+- `GET /api/auth/me` - 获取当前用户信息
+- `GET /api/history/trips` - 获取旅行历史
+- `GET /api/history/trips/{trip_id}` - 获取单个旅行记录
+- `POST /api/history/trips/save` - 保存旅行计划
+- `DELETE /api/history/trips/{trip_id}` - 删除旅行记录
+- `GET /api/history/conversations` - 获取对话历史
 
 ### 2. 前端核心模块
 
 #### 2.1 状态管理 (`frontend/src/stores/`)
 
 **文件结构：**
-- `tripStore.ts` - Pinia 状态管理
+- `tripStore.ts` - 旅行规划状态管理
+- `authStore.ts` - 用户认证状态管理
 
 **管理状态：**
 - 请求状态（loading, progress）
@@ -111,6 +153,7 @@
 - 流式数据（attractions, weather, hotels）
 - 生成的旅行计划
 - 错误信息
+- 用户登录状态和用户信息
 
 #### 2.2 组件系统 (`frontend/src/components/`)
 
@@ -123,16 +166,22 @@
 **文件结构：**
 - `Home.vue` - 首页（表单输入、实时进度显示）
 - `Result.vue` - 结果页（行程展示、地图可视化）
+- `Login.vue` - 登录/注册页面
+- `History.vue` - 历史记录查看页面
 
 #### 2.4 API 服务 (`frontend/src/services/`)
 
 **文件结构：**
 - `api.ts` - 前端 API 服务封装
+- `auth.ts` - 认证服务封装
 
 **功能：**
 - 流式请求支持
 - 请求去重（AbortController）
 - 错误重试机制（指数退避）
+- JWT token 自动管理
+- 请求拦截器（自动添加 token）
+- 响应拦截器（处理 401 错误）
 
 ---
 
@@ -293,6 +342,23 @@ def _generate_request_hash(request_data: TripRequest) -> str:
 - 创建 `AgentStatus` 组件显示每个智能体的工作状态
 - 支持动画效果和进度指示
 - 实时更新智能体的进度和消息
+
+### 7. 用户记忆和个性化
+
+**创新点：**
+- 集成 LangChain 的 ConversationBufferMemory
+- 自动提取和更新用户偏好（常用城市、交通方式、住宿类型等）
+- 在生成新计划时自动应用历史偏好
+- 支持查看历史旅行计划和对话记录
+
+**实现方式：**
+```python
+# 加载用户记忆上下文
+memory_context = build_memory_context(db, user_id, request)
+
+# 注入到规划 prompt 中
+prompt += f"**用户历史偏好和对话记忆:**\n{memory_context}\n\n"
+```
 
 ---
 
@@ -564,19 +630,26 @@ pip install -r requirements.txt
 
 创建 `.env` 文件：
 ```bash
-# 高德地图 API
-AMAP_API_KEY=your_amap_api_key
+# 高德地图 API（需要在高德开放平台申请）
+AMAP_API_KEY=your_amap_api_key_here
 
-# LLM 配置
-LLM_API_KEY=your_llm_api_key
+# LLM 配置（支持 OpenAI、DeepSeek 等兼容 OpenAI 格式的 API）
+LLM_API_KEY=your_llm_api_key_here
 LLM_BASE_URL=https://api.openai.com/v1  # 或你的 LLM 服务地址
 LLM_MODEL_ID=gpt-4  # 或你的模型 ID
 
+# JWT 配置（生产环境请务必修改为强密钥）
+JWT_SECRET_KEY=your-secret-key-change-in-production
+
 # 可选：图片服务
-UNSPLASH_ACCESS_KEY=your_unsplash_key
+UNSPLASH_ACCESS_KEY=your_unsplash_key_here
 ```
 
-4. **启动后端服务**
+4. **数据库初始化**
+
+数据库会在应用启动时自动创建。数据库文件位于 `backend/data/trip_planner.db`。
+
+5. **启动后端服务**
 ```bash
 uv run uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -602,7 +675,9 @@ npm install
 
 创建 `.env` 文件：
 ```bash
-VITE_AMAP_WEB_KEY=your_amap_web_key
+# 高德地图 Web API Key（用于前端地图显示）
+VITE_AMAP_WEB_KEY=your_amap_web_key_here
+# 后端 API 地址
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
@@ -618,6 +693,31 @@ npm run dev
 ---
 
 ## 📖 操作手册
+
+### 0. 用户注册和登录
+
+#### 注册新用户
+
+1. 打开应用首页
+2. 点击右上角 **"登录"** 按钮
+3. 切换到 **"注册"** 标签页
+4. 填写以下信息：
+   - **用户名**：3-50个字符
+   - **邮箱**：有效的邮箱地址
+   - **密码**：至少6个字符
+   - **确认密码**：再次输入密码
+5. 点击 **"注册"** 按钮
+6. 注册成功后自动切换到登录页面
+
+#### 登录
+
+1. 在登录页面输入用户名或邮箱和密码
+2. 点击 **"登录"** 按钮
+3. 登录成功后自动跳转到首页
+
+**注意：**
+- 未登录用户仍可使用系统生成旅行计划，但不会保存历史记录
+- 登录用户可以查看和管理历史记录，系统会记住您的偏好
 
 ### 1. 生成旅行计划
 
@@ -714,7 +814,28 @@ npm run dev
    - **📷 导出为图片**：生成行程图片
    - **📄 导出为PDF**：生成 PDF 文档
 
-### 4. 常见问题
+### 4. 查看历史记录
+
+#### 查看旅行历史
+
+1. 登录后，点击右上角 **"历史记录"** 按钮
+2. 在 **"旅行记录"** 标签页查看所有历史旅行计划
+3. 点击某个记录可以查看详情
+4. 点击 **"加载此计划"** 可以重新加载该计划到结果页
+5. 点击 **"删除"** 按钮可以删除不需要的记录（会弹出确认对话框）
+
+#### 查看对话历史
+
+1. 在历史记录页面切换到 **"对话历史"** 标签页
+2. 查看与系统的历史对话记录
+3. 了解系统如何根据您的偏好生成计划
+
+**功能说明：**
+- 系统会自动记录每次旅行规划请求和生成的计划
+- 系统会学习您的偏好（常用城市、交通方式、住宿类型等）
+- 在生成新计划时，系统会参考您的历史偏好，提供更个性化的建议
+
+### 5. 常见问题
 
 #### Q: 为什么生成计划需要较长时间？
 
@@ -731,6 +852,17 @@ A: 可以返回首页重新生成，或使用编辑功能手动调整。
 #### Q: 支持哪些城市？
 
 A: 支持高德地图 API 覆盖的所有城市。
+
+#### Q: 为什么要注册登录？
+
+A: 注册登录后，系统可以：
+- 记住您的旅行偏好，提供更个性化的建议
+- 保存您的旅行历史，方便随时查看
+- 记录对话历史，让系统更好地理解您的需求
+
+#### Q: 未登录可以使用吗？
+
+A: 可以。未登录用户可以使用所有核心功能，但不会保存历史记录和偏好。
 
 ---
 
@@ -829,6 +961,103 @@ Content-Type: application/json
 }
 ```
 
+#### 6. 用户注册
+
+```http
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "email": "test@example.com",
+  "password": "password123"
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "message": "注册成功",
+  "data": {
+    "id": 1,
+    "username": "testuser",
+    "email": "test@example.com",
+    "created_at": "2025-01-01T00:00:00"
+  }
+}
+```
+
+#### 7. 用户登录
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+```
+
+**响应：**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+#### 8. 获取当前用户信息
+
+```http
+GET /api/auth/me
+Authorization: Bearer {access_token}
+```
+
+#### 9. 获取旅行历史
+
+```http
+GET /api/history/trips?limit=20&offset=0
+Authorization: Bearer {access_token}
+```
+
+#### 10. 获取对话历史
+
+```http
+GET /api/history/conversations?limit=20&session_id={session_id}
+Authorization: Bearer {access_token}
+```
+
+#### 11. 保存旅行计划
+
+```http
+POST /api/history/trips/save
+Authorization: Bearer {access_token}
+Content-Type: application/json
+
+{
+  "request": {
+    "city": "北京",
+    "start_date": "2024-06-01",
+    "end_date": "2024-06-03",
+    ...
+  },
+  "plan": {
+    "city": "北京",
+    "days": [...],
+    ...
+  }
+}
+```
+
+#### 12. 删除旅行记录
+
+```http
+DELETE /api/history/trips/{trip_id}
+Authorization: Bearer {access_token}
+```
+
 ---
 
 ## 📁 项目结构
@@ -855,7 +1084,15 @@ intelligent-trip-planner/  # 或你的项目名称
 │   │   │   ├── unsplash_service.py   # Unsplash 图片服务
 │   │   │   └── image_service.py      # 多源图片服务（统一接口）
 │   │   ├── models/                    # 数据模型
-│   │   │   └── schemas.py            # Pydantic 模型
+│   │   │   ├── schemas.py            # Pydantic 模型
+│   │   │   └── database.py           # SQLAlchemy 数据库模型
+│   │   ├── services/                 # 服务层
+│   │   │   ├── llm_service.py        # LLM 服务
+│   │   │   ├── amap_service.py       # 高德地图服务
+│   │   │   ├── unsplash_service.py   # Unsplash 图片服务
+│   │   │   ├── image_service.py       # 多源图片服务（统一接口）
+│   │   │   ├── auth_service.py        # 认证服务
+│   │   │   └── memory_service.py     # 记忆服务
 │   │   └── config.py                  # 配置管理
 │   ├── requirements.txt               # Python 依赖
 │   ├── pyproject.toml                 # 项目配置
@@ -868,12 +1105,16 @@ intelligent-trip-planner/  # 或你的项目名称
 │   │   │   ├── AgentStatus.vue        # 智能体状态组件
 │   │   │   └── StreamingContent.vue   # 流式内容组件
 │   │   ├── stores/                    # Pinia 状态管理
-│   │   │   └── tripStore.ts           # 旅行状态管理
+│   │   │   ├── tripStore.ts           # 旅行状态管理
+│   │   │   └── authStore.ts           # 认证状态管理
 │   │   ├── services/                  # API 服务
-│   │   │   └── api.ts                 # API 封装
+│   │   │   ├── api.ts                 # API 封装
+│   │   │   └── auth.ts                # 认证服务封装
 │   │   ├── views/                      # 页面视图
 │   │   │   ├── Home.vue               # 首页
-│   │   │   └── Result.vue             # 结果页
+│   │   │   ├── Result.vue             # 结果页
+│   │   │   ├── Login.vue              # 登录/注册页
+│   │   │   └── History.vue            # 历史记录页
 │   │   ├── types/                      # TypeScript 类型
 │   │   │   └── index.ts               # 类型定义
 │   │   ├── App.vue                     # 根组件
@@ -901,6 +1142,9 @@ intelligent-trip-planner/  # 或你的项目名称
 | Pydantic | 2.0+ | 数据验证 |
 | httpx | 0.25+ | HTTP 客户端 |
 | uvicorn | 0.24+ | ASGI 服务器 |
+| SQLAlchemy | 2.0+ | ORM 框架 |
+| passlib | 1.7+ | 密码加密 |
+| python-jose | 3.3+ | JWT 处理 |
 
 ### 前端技术栈
 
@@ -944,6 +1188,14 @@ intelligent-trip-planner/  # 或你的项目名称
    - 实现流式请求处理
    - 创建智能体状态组件
    - 优化用户体验
+
+5. **第五阶段：用户认证和记忆功能**
+   - 实现用户注册和登录系统
+   - 集成 SQLite 数据库
+   - 添加 LangChain 记忆功能
+   - 实现用户偏好自动提取
+   - 创建历史记录管理功能
+   - 前端认证和路由守卫
 
 ---
 
@@ -1001,6 +1253,8 @@ intelligent-trip-planner/  # 或你的项目名称
 3. **功能增强**：添加流式响应、请求去重、多源图片服务等
 4. **UI 改进**：现代化前端设计，更好的用户体验
 5. **代码重构**：优化代码结构，提高可维护性
+6. **用户系统**：添加用户认证、数据持久化和历史记录管理
+7. **智能记忆**：集成 LangChain 记忆系统，实现个性化推荐
 
 ### 开源协议
 
@@ -1012,4 +1266,53 @@ intelligent-trip-planner/  # 或你的项目名称
 
 ---
 
-*最后更新：2025年*
+*最后更新：2025年12月13日*
+
+## 🆕 最新更新
+
+### v1.2.0 - 功能优化和问题修复
+
+**新增功能：**
+- ✅ 历史记录删除功能
+- ✅ 天气功能优化（穿着建议、活动建议）
+- ✅ 根据天气自动调整行程规划（雨天优先室内景点、避免步行等）
+- ✅ 旅行计划保存功能优化（直接保存现有计划）
+- ✅ 编辑功能完善（修复索引问题、地图重新初始化）
+- ✅ 格式显示优化（建议文本换行、day_index 修复）
+
+**问题修复：**
+- ✅ 修复保存历史记录失败的问题
+- ✅ 修复编辑功能中删除/移动景点无效的问题
+- ✅ 修复保存编辑后地图无法加载的问题
+- ✅ 修复建议文本格式显示问题（数字编号换行）
+- ✅ 修复每日行程从第二天开始的问题
+- ✅ 修复 JSON 解析错误（未终止字符串等）
+- ✅ 修复前端进度条状态更新问题（确保状态正确同步）
+
+**技术改进：**
+- 改进 JSON 解析错误处理（自动修复常见格式问题）
+- 优化流式响应状态同步机制
+- 增强错误处理和异常捕获
+- 改进前端进度条状态管理
+
+### v1.1.0 - 用户认证和记忆功能
+
+**新增功能：**
+- ✅ 用户注册和登录系统（JWT token 认证）
+- ✅ SQLite 数据库支持（用户、历史记录、偏好）
+- ✅ LangChain 记忆功能集成
+- ✅ 用户偏好自动提取和更新
+- ✅ 历史记录查看和管理
+- ✅ 前端认证状态管理和路由守卫
+
+**技术改进：**
+- 使用 SQLAlchemy ORM 进行数据管理
+- 使用 bcrypt 进行密码加密
+- 使用 python-jose 处理 JWT token
+- 集成 LangChain ConversationBufferMemory
+- 前端自动 token 管理和错误处理
+
+**使用说明：**
+- 未登录用户仍可使用所有核心功能
+- 登录用户可以享受个性化推荐和历史记录管理
+- 系统会自动学习用户偏好，提供更精准的旅行建议
