@@ -405,48 +405,82 @@ const isLoading = ref(false)
 const isPlanSaved = ref(false)
 let map: any = null
 
-// 验证和修复计划数据
-const validateAndFixPlan = (plan: any): TripPlan | null => {
+// 验证和修复计划数据（宽松模式，允许部分数据用于显示）
+const validateAndFixPlan = (plan: any, strict: boolean = false): TripPlan | null => {
   if (!plan) {
-    return null
-  }
-  
-  // 确保 days 字段存在且是数组
-  if (!plan.days) {
-    console.error('计划缺少 days 字段:', plan)
-    return null
-  }
-  
-  if (!Array.isArray(plan.days)) {
-    console.error('计划 days 不是数组:', typeof plan.days, plan.days)
-    return null
-  }
-  
-  if (plan.days.length === 0) {
-    console.error('计划 days 数组为空')
-    return null
-  }
-  
-  // 确保必要字段存在
-  if (!plan.city || !plan.start_date || !plan.end_date) {
-    console.error('计划缺少必要字段:', { city: plan.city, start_date: plan.start_date, end_date: plan.end_date })
+    console.warn('validateAndFixPlan: plan 为 null 或 undefined')
     return null
   }
   
   // 修复 days 数组中的 day_index
-  plan.days = plan.days.map((day: any, index: number) => {
-    if (day.day_index === undefined || day.day_index === null) {
-      day.day_index = index
+  if (plan.days && Array.isArray(plan.days)) {
+    plan.days = plan.days.map((day: any, index: number) => {
+      if (day.day_index === undefined || day.day_index === null) {
+        day.day_index = index
+      }
+      // 确保每个 day 都有必要的字段
+      if (!day.attractions) {
+        day.attractions = []
+      }
+      if (!day.meals) {
+        day.meals = []
+      }
+      return day
+    })
+  } else if (plan.days === undefined || plan.days === null) {
+    // 如果没有 days 字段，尝试创建空数组（仅在非严格模式下）
+    if (!strict) {
+      console.warn('validateAndFixPlan: plan.days 不存在，创建空数组（宽松模式）')
+      plan.days = []
     }
-    // 确保每个 day 都有必要的字段
-    if (!day.attractions) {
-      day.attractions = []
+  }
+  
+  // 严格模式：保存前必须验证完整性
+  if (strict) {
+    // 确保 days 字段存在且是数组
+    if (!plan.days) {
+      console.error('严格验证失败: 计划缺少 days 字段')
+      console.error('完整计划对象:', JSON.stringify(plan, null, 2))
+      return null
     }
-    if (!day.meals) {
-      day.meals = []
+    
+    if (!Array.isArray(plan.days)) {
+      console.error('严格验证失败: 计划 days 不是数组', typeof plan.days)
+      console.error('plan.days 值:', plan.days)
+      return null
     }
-    return day
-  })
+    
+    if (plan.days.length === 0) {
+      console.error('严格验证失败: 计划 days 数组为空')
+      return null
+    }
+    
+    // 确保必要字段存在
+    if (!plan.city || !plan.start_date || !plan.end_date) {
+      console.error('严格验证失败: 计划缺少必要字段')
+      console.error('字段详情:', { 
+        city: plan.city, 
+        start_date: plan.start_date, 
+        end_date: plan.end_date,
+        hasCity: !!plan.city,
+        hasStartDate: !!plan.start_date,
+        hasEndDate: !!plan.end_date
+      })
+      return null
+    }
+    
+    // 验证每个 day 的基本结构
+    for (let i = 0; i < plan.days.length; i++) {
+      const day = plan.days[i]
+      if (!day) {
+        console.error(`严格验证失败: days[${i}] 为 null 或 undefined`)
+        return null
+      }
+      if (!day.date) {
+        console.warn(`警告: days[${i}] 缺少 date 字段`)
+      }
+    }
+  }
   
   return plan as TripPlan
 }
@@ -470,7 +504,8 @@ const checkPlanSaved = () => {
 // 监听 store 中的计划更新
 watch(() => tripStore.tripPlan, (newPlan) => {
   if (newPlan) {
-    const validatedPlan = validateAndFixPlan(newPlan)
+    // 宽松模式验证，允许显示部分数据
+    const validatedPlan = validateAndFixPlan(newPlan, false)
     if (validatedPlan) {
       tripPlan.value = validatedPlan
       sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
@@ -486,7 +521,7 @@ watch(() => tripStore.tripPlan, (newPlan) => {
         window.scrollTo({ top: 0, behavior: 'smooth' })
       })
     } else {
-      console.warn('store 中的计划数据不完整，忽略更新')
+      console.warn('store 中的计划数据格式错误，忽略更新')
     }
   }
 }, { immediate: true })
@@ -510,11 +545,12 @@ watch(() => tripStore.streamingData, (newData) => {
 onMounted(async () => {
   // 优先从 store 获取
   if (tripStore.tripPlan) {
-    const validatedPlan = validateAndFixPlan(tripStore.tripPlan)
+    // 宽松模式验证
+    const validatedPlan = validateAndFixPlan(tripStore.tripPlan, false)
     if (validatedPlan) {
       tripPlan.value = validatedPlan
     } else {
-      console.warn('store 中的计划数据不完整，清除')
+      console.warn('store 中的计划数据格式错误，清除')
       tripStore.setTripPlan(null)
     }
   } else {
@@ -523,12 +559,13 @@ onMounted(async () => {
     if (data) {
       try {
         const parsedPlan = JSON.parse(data)
-        const validatedPlan = validateAndFixPlan(parsedPlan)
+        // 宽松模式验证
+        const validatedPlan = validateAndFixPlan(parsedPlan, false)
         if (validatedPlan) {
           tripPlan.value = validatedPlan
           tripStore.setTripPlan(validatedPlan)
         } else {
-          console.warn('sessionStorage 中的计划数据不完整，清除缓存')
+          console.warn('sessionStorage 中的计划数据格式错误，清除缓存')
           sessionStorage.removeItem('tripPlan')
         }
       } catch (e) {
@@ -542,7 +579,8 @@ onMounted(async () => {
         // 监听规划完成
         const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
           if (newPlan) {
-            const validatedPlan = validateAndFixPlan(newPlan)
+            // 宽松模式验证
+            const validatedPlan = validateAndFixPlan(newPlan, false)
             if (validatedPlan) {
               tripPlan.value = validatedPlan
               sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
@@ -552,8 +590,6 @@ onMounted(async () => {
                 loadAttractionPhotos()
                 initMap()
               })
-            } else {
-              console.warn('规划完成的计划数据不完整')
             }
           }
         }, { immediate: true })
@@ -579,7 +615,8 @@ onMounted(async () => {
     // 监听规划完成
     const stopWatcher = watch(() => tripStore.tripPlan, (newPlan) => {
       if (newPlan && !tripPlan.value) {
-        const validatedPlan = validateAndFixPlan(newPlan)
+        // 宽松模式验证
+        const validatedPlan = validateAndFixPlan(newPlan, false)
         if (validatedPlan) {
           tripPlan.value = validatedPlan
           sessionStorage.setItem('tripPlan', JSON.stringify(validatedPlan))
@@ -589,8 +626,6 @@ onMounted(async () => {
             loadAttractionPhotos()
             initMap()
           })
-        } else {
-          console.warn('规划完成的计划数据不完整')
         }
       }
     }, { immediate: true })
@@ -605,7 +640,8 @@ onMounted(async () => {
     if (pendingPlan) {
       try {
         const plan = JSON.parse(pendingPlan)
-        const validatedPlan = validateAndFixPlan(plan)
+        // 保存时使用严格模式验证
+        const validatedPlan = validateAndFixPlan(plan, true)
         if (validatedPlan) {
           // 自动保存计划
           await handleSavePlan(validatedPlan)
@@ -647,50 +683,48 @@ const handleSavePlan = async (planToSave?: TripPlan) => {
     return
   }
   
-  // 验证计划数据完整性
-  console.log('准备保存的计划数据:', plan)
+  // 使用严格模式验证计划数据完整性（保存前必须完整）
+  console.log('=== 保存计划前验证 ===')
+  console.log('原始计划对象:', plan)
+  console.log('计划类型:', typeof plan)
   console.log('计划days:', plan.days)
+  console.log('计划days类型:', typeof plan.days)
+  console.log('计划days是否为数组:', Array.isArray(plan.days))
+  console.log('计划days长度:', plan.days?.length)
+  console.log('计划city:', plan.city)
+  console.log('计划start_date:', plan.start_date)
+  console.log('计划end_date:', plan.end_date)
   
-  if (!plan.days) {
-    console.error('plan.days 不存在')
-    message.error('旅行计划数据不完整（缺少days字段），无法保存')
+  const validatedPlan = validateAndFixPlan(plan, true)
+  if (!validatedPlan) {
+    console.error('=== 计划数据验证失败 ===')
+    console.error('失败的计划对象:', JSON.stringify(plan, null, 2))
+    message.error('旅行计划数据不完整，无法保存。请确保计划包含完整的行程信息。')
     return
   }
   
-  if (!Array.isArray(plan.days)) {
-    console.error('plan.days 不是数组:', typeof plan.days, plan.days)
-    message.error('旅行计划数据格式错误（days不是数组），无法保存')
-    return
-  }
+  console.log('=== 验证通过 ===')
+  console.log('验证后的计划:', validatedPlan)
   
-  if (plan.days.length === 0) {
-    console.error('plan.days 是空数组')
-    message.error('旅行计划数据不完整（days数组为空），无法保存')
-    return
-  }
-  
-  if (!plan.city || !plan.start_date || !plan.end_date) {
-    console.error('缺少必要字段:', { city: plan.city, start_date: plan.start_date, end_date: plan.end_date })
-    message.error('旅行计划缺少必要信息（城市、开始日期或结束日期），无法保存')
-    return
-  }
+  // 使用验证后的计划
+  const planToSaveValidated = validatedPlan
   
   try {
     // 构建请求数据（从计划中提取）
     const requestData: TripFormData = {
-      city: plan.city,
-      start_date: plan.start_date,
-      end_date: plan.end_date,
-      travel_days: plan.days.length,
-      transportation: plan.days[0]?.transportation || '公共交通',
-      accommodation: plan.days[0]?.accommodation || '经济型酒店',
+      city: planToSaveValidated.city,
+      start_date: planToSaveValidated.start_date,
+      end_date: planToSaveValidated.end_date,
+      travel_days: planToSaveValidated.days.length,
+      transportation: planToSaveValidated.days[0]?.transportation || '公共交通',
+      accommodation: planToSaveValidated.days[0]?.accommodation || '经济型酒店',
       preferences: [],
       free_text_input: ''
     }
     
     // 调用新的保存 API，直接保存现有计划
     const { saveTripPlan } = await import('@/services/api')
-    await saveTripPlan(requestData, plan)
+    await saveTripPlan(requestData, planToSaveValidated)
     
     // 清除待保存的计划
     sessionStorage.removeItem('pendingTripPlan')
