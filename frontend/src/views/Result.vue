@@ -530,10 +530,17 @@ onMounted(async () => {
     if (pendingPlan) {
       try {
         const plan = JSON.parse(pendingPlan)
-        // 自动保存计划
-        await handleSavePlan(plan)
+        // 验证计划数据完整性后再保存
+        if (plan && plan.days && Array.isArray(plan.days) && plan.days.length > 0) {
+          // 自动保存计划
+          await handleSavePlan(plan)
+        } else {
+          console.warn('待保存的计划数据不完整，跳过自动保存')
+          sessionStorage.removeItem('pendingTripPlan')
+        }
       } catch (e) {
         console.error('解析待保存计划失败:', e)
+        sessionStorage.removeItem('pendingTripPlan')
       }
     }
   }
@@ -566,14 +573,30 @@ const handleSavePlan = async (planToSave?: TripPlan) => {
   }
   
   // 验证计划数据完整性
-  if (!plan.days || !Array.isArray(plan.days) || plan.days.length === 0) {
-    message.error('旅行计划数据不完整，无法保存')
-    console.error('计划数据:', plan)
+  console.log('准备保存的计划数据:', plan)
+  console.log('计划days:', plan.days)
+  
+  if (!plan.days) {
+    console.error('plan.days 不存在')
+    message.error('旅行计划数据不完整（缺少days字段），无法保存')
+    return
+  }
+  
+  if (!Array.isArray(plan.days)) {
+    console.error('plan.days 不是数组:', typeof plan.days, plan.days)
+    message.error('旅行计划数据格式错误（days不是数组），无法保存')
+    return
+  }
+  
+  if (plan.days.length === 0) {
+    console.error('plan.days 是空数组')
+    message.error('旅行计划数据不完整（days数组为空），无法保存')
     return
   }
   
   if (!plan.city || !plan.start_date || !plan.end_date) {
-    message.error('旅行计划缺少必要信息，无法保存')
+    console.error('缺少必要字段:', { city: plan.city, start_date: plan.start_date, end_date: plan.end_date })
+    message.error('旅行计划缺少必要信息（城市、开始日期或结束日期），无法保存')
     return
   }
   
