@@ -175,7 +175,7 @@ async def plan_trip_stream(
                     event["requires_login"] = current_user is None
                 
                 yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
-                
+            
                 # 保存最终计划
                 if event.get("type") == "complete" and event.get("plan"):
                     trip_plan = event.get("plan")

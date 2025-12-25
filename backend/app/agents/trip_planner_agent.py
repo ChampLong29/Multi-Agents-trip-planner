@@ -470,7 +470,7 @@ class MultiAgentTripPlanner:
                 # 只有在解析失败时才尝试修复
                 print(f"⚠️  首次JSON解析失败，尝试修复...")
                 json_str = self._fix_json_string(json_str)
-                data = json.loads(json_str)
+            data = json.loads(json_str)
             
             # 确保 day_index 从 0 开始
             if "days" in data and isinstance(data["days"], list):

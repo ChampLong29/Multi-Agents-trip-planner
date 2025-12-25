@@ -501,6 +501,12 @@ const handleSubmit = async () => {
     return
   }
 
+  // 清除历史记录标记，这是新生成的计划
+  sessionStorage.removeItem('tripPlanSource')
+  sessionStorage.removeItem('savedPlanId')
+  sessionStorage.removeItem('savedPlanInfo')
+  sessionStorage.removeItem('autoSaveExecuted')
+  
   // 生成请求ID
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   tripStore.startRequest(requestId)

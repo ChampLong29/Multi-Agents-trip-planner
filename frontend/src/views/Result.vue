@@ -584,9 +584,12 @@ watch(() => tripStore.tripPlan, async (newPlan) => {
       // 如果计划来源不是历史记录，清除历史记录标记
       const planSource = sessionStorage.getItem('tripPlanSource')
       if (planSource !== 'history') {
-        // 新生成的计划，清除保存标记，重新检查
+        // 新生成的计划，清除所有历史相关标记
+        console.log('检测到新生成的计划，清除历史记录标记')
+        sessionStorage.removeItem('tripPlanSource')
         sessionStorage.removeItem('savedPlanId')
         sessionStorage.removeItem('savedPlanInfo')
+        sessionStorage.removeItem('autoSaveExecuted')
         await checkPlanSaved()
       }
       
